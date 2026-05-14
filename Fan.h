@@ -33,16 +33,18 @@ class Transceiver {
 #define FAN_PREAMBLE_OFF_US 8000
 #define FAN_REPEAT_COUNT 8
 
+// 5-bit command: N5 (4 bits) + N6[3] (1 bit)
+// N5 = upper 4 bits, N6[3] = lowest bit
 enum class fan_commands : byte {
-  light = 0x9,
-  fan = 0x5,
-  color = 0xE,
-  speed1 = 0x2,
-  speed2 = 0x8,
-  speed3 = 0x6,
-  speed4 = 0x3,
-  speed5 = 0x4,
-  speed6 = 0xA
+  light  = 0x12,  // N5=0x9,  N6[3]=0
+  fan    = 0x0A,  // N5=0x5,  N6[3]=0
+  color  = 0x1C,  // N5=0xE,  N6[3]=0
+  speed1 = 0x04,  // N5=0x2,  N6[3]=0
+  speed2 = 0x10,  // N5=0x8,  N6[3]=0
+  speed3 = 0x0C,  // N5=0x6,  N6[3]=0
+  speed4 = 0x06,  // N5=0x3,  N6[3]=0
+  speed5 = 0x09,  // N5=0x4,  N6[3]=1
+  speed6 = 0x15   // N5=0xA,  N6[3]=1
 };
 
 struct fan_device_t {
@@ -140,8 +142,8 @@ inline uint32_t FanController::buildCode(const fan_device_t &fan, fan_commands c
   const uint8_t n2 = fan.N2 & 0x0F;
   const uint8_t n3 = fan.N3 & 0x0F;
   const uint8_t n4 = fan.N4 & 0x0F;
-  const uint8_t n5 = static_cast<uint8_t>(cmd) & 0x0F;
-  const uint8_t n6 = 0x0;
+  const uint8_t n5 = (static_cast<uint8_t>(cmd) >> 1) & 0x0F;
+  const uint8_t n6 = (static_cast<uint8_t>(cmd) & 0x01) << 3;
   const uint8_t n7 = (n0 ^ n1 ^ n2 ^ n3 ^ n4 ^ n5 ^ n6 ^ 0x0A) & 0x0F;
   return ((uint32_t)n0 << 28) |
     ((uint32_t)n1 << 24) |

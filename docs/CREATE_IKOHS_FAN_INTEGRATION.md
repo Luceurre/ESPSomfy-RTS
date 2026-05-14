@@ -39,35 +39,38 @@ Repeated **8 times** per command transmission.
 
 ### Code Structure (32-bit)
 
-| Nibble | Bits     | Description               |
-|--------|----------|---------------------------|
-| N0     | 31-28    | Address nibble 1           |
-| N1     | 27-24    | Address nibble 2           |
-| N2     | 23-20    | Address nibble 3           |
-| N3     | 19-16    | Address nibble 4           |
-| N4     | 15-12    | Address nibble 5           |
-| N5     | 11-8     | Command code              |
-| N6     | 7-4      | Unused (always 0)          |
-| N7     | 3-0      | Checksum (XOR-based)       |
+| Nibble | Bits     | Description                             |
+|--------|----------|-----------------------------------------|
+| N0     | 31-28    | Address nibble 1                         |
+| N1     | 27-24    | Address nibble 2                         |
+| N2     | 23-20    | Address nibble 3                         |
+| N3     | 19-16    | Address nibble 4                         |
+| N4     | 15-12    | Address nibble 5                         |
+| N5     | 11-8     | Command (upper 4 bits of 5-bit command)  |
+| N6     | 7-4      | Bit 3 = lowest command bit; Bits 2-0 = 3-bit rolling counter |
+| N7     | 3-0      | Checksum (XOR-based)                     |
 
 **Address**: 20-bit value across N0-N4 (range: 1 to 1,048,575). Each fan remote has a unique
 address. The decimal address is converted: e.g., 542295 = 0x84657 = N0=8, N1=4, N2=6, N3=5, N4=7.
+
+**5-bit Command**: Split across N5 (upper 4 bits) and N6 bit 3 (lowest bit). N5 = `(cmd >> 1)`,
+N6[3] = `(cmd & 1)`. The remaining 3 bits of N6 form a rolling counter (wraps 0-7).
 
 **Checksum (N7)**: `(N0 ^ N1 ^ N2 ^ N3 ^ N4 ^ N5 ^ N6 ^ 0x0A) & 0x0F`
 
 ### Commands
 
-| Name   | Code | Hex | Description                     |
-|--------|------|-----|---------------------------------|
-| light  | 0x9  | 09  | Toggle light on/off             |
-| fan    | 0x5  | 05  | Toggle fan on/off              |
-| color  | 0xE  | 0E  | Cycle light color              |
-| speed1 | 0x2  | 02  | Set fan speed to 1            |
-| speed2 | 0x8  | 08  | Set fan speed to 2            |
-| speed3 | 0x6  | 06  | Set fan speed to 3            |
-| speed4 | 0x3  | 03  | Set fan speed to 4            |
-| speed5 | 0x4  | 04  | Set fan speed to 5            |
-| speed6 | 0xA  | 0A  | Set fan speed to 6            |
+| Name   | 5-bit Code | N5   | N6[3] | Description                     |
+|--------|------------|------|-------|---------------------------------|
+| light  | 0x12       | 0x9  | 0     | Toggle light on/off             |
+| fan    | 0x0A       | 0x5  | 0     | Toggle fan on/off               |
+| color  | 0x1C       | 0xE  | 0     | Cycle light color               |
+| speed1 | 0x04       | 0x2  | 0     | Set fan speed to 1              |
+| speed2 | 0x10       | 0x8  | 0     | Set fan speed to 2              |
+| speed3 | 0x0C       | 0x6  | 0     | Set fan speed to 3              |
+| speed4 | 0x06       | 0x3  | 0     | Set fan speed to 4              |
+| speed5 | 0x09       | 0x4  | 1     | Set fan speed to 5              |
+| speed6 | 0x15       | 0xA  | 1     | Set fan speed to 6              |
 
 ## Reverse Engineering Methodology
 
@@ -77,8 +80,9 @@ The protocol was reverse-engineered using:
 3. **Python scripts** to decode nibble values, test checksum hypotheses, and verify across multiple captures
 
 Key findings:
-- N6 and N7 were initially thought to be error correction or part of the command — testing with
-  random values confirmed they are ignored by the fan
+- Initial analysis assumed N5 was the full 4-bit command and N6 was unused. However, two button
+  pairs mapped to the same N5 value (Speed 5/Mute both N5=0x4, Speed 2/Invert Rotation both N5=0x8).
+  Further analysis revealed N6[3] is the 5th command bit, while N6[2:0] is a rolling counter.
 - The checksum N7 uses XOR with constant 0x0A
 - Each fan remote has a fixed address that doesn't change
 
@@ -247,7 +251,8 @@ The address can be decoded from captured signals by extracting N0-N4 nibbles and
 - Fan shares the CC1101 with Somfy RTS; fan commands temporarily switch frequency
 - Maximum 16 fans supported (`MAX_FANS` in Fan.h)
 - No OTA support — firmware binary too large for default OTA partition, requires USB flash
-- Rolling codes are NOT used (static 32-bit code), unlike Somfy RTS
+- Rolling codes are NOT used (static 32-bit code with 3-bit counter), unlike Somfy RTS
+- Only 9 of 14 remote buttons exposed in firmware (Cooldown timers, Mute, Invert Rotation decoded but not yet in UI)
 
 ## Backup & Recovery
 
