@@ -5,6 +5,7 @@
 #include "ConfigSettings.h"
 #include "MQTT.h"
 #include "Somfy.h"
+#include "Fan.h"
 #include "Network.h"
 #include "Utils.h"
 
@@ -16,6 +17,7 @@ static char g_content[MQTT_MAX_RESPONSE];
 
 extern ConfigSettings settings;
 extern SomfyShadeController somfy;
+extern FanController fanCtrl;
 extern Network net;
 extern rebootDelay_t rebootDelay;
 
@@ -157,6 +159,41 @@ void MQTTClass::receive(const char *topic, byte*payload, uint32_t length) {
       }
     }
   }
+  else if(strncmp(entityType, "fans", sizeof(entityType)) == 0) {
+    uint8_t fanId = atoi(entityId);
+    if(fanCtrl.getFanById(fanId) != nullptr) {
+      uint8_t cmdByte = 255;
+      if(strncmp(command, "fan_command", sizeof(command)) == 0) {
+        if(strncmp(value, "ON", sizeof(value)) == 0 || strncmp(value, "OFF", sizeof(value)) == 0)
+          cmdByte = static_cast<uint8_t>(fan_commands::fan);
+      }
+      else if(strncmp(command, "light_command", sizeof(command)) == 0) {
+        if(strncmp(value, "ON", sizeof(value)) == 0 || strncmp(value, "OFF", sizeof(value)) == 0)
+          cmdByte = static_cast<uint8_t>(fan_commands::light);
+      }
+      else if(strncmp(command, "preset", sizeof(command)) == 0) {
+        if(strncmp(value, "speed1", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed1);
+        else if(strncmp(value, "speed2", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed2);
+        else if(strncmp(value, "speed3", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed3);
+        else if(strncmp(value, "speed4", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed4);
+        else if(strncmp(value, "speed5", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed5);
+        else if(strncmp(value, "speed6", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed6);
+      }
+      else if(strncmp(command, "button_", 7) == 0) {
+        char *buttonCommand = strchr(command, '_');
+        if(buttonCommand != nullptr && strncmp(value, "PRESS", sizeof(value)) == 0) {
+          buttonCommand++;
+          if(strncmp(buttonCommand, "color", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::color);
+          else if(strncmp(buttonCommand, "mute", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::mute);
+          else if(strncmp(buttonCommand, "invert", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::invert);
+          else if(strncmp(buttonCommand, "cooldown1h", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::cooldown1h);
+          else if(strncmp(buttonCommand, "cooldown2h", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::cooldown2h);
+          else if(strncmp(buttonCommand, "cooldown4h", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::cooldown4h);
+        }
+      }
+      if(cmdByte != 255) fanCtrl.sendCommand(fanId, static_cast<fan_commands>(cmdByte));
+    }
+  }
   else if(strncmp(entityType, "groups", sizeof(entityType)) == 0) {
     SomfyGroup* group = somfy.getGroupById(atoi(entityId));
     if (group) {
@@ -227,6 +264,11 @@ bool MQTTClass::connect() {
         this->subscribe("groups/+/sunFlag/set");
         this->subscribe("groups/+/sunny/set");
         this->subscribe("groups/+/windy/set");
+        fanCtrl.publish();
+        this->subscribe("fans/+/fan_command/set");
+        this->subscribe("fans/+/light_command/set");
+        this->subscribe("fans/+/preset/set");
+        this->subscribe("fans/+/button_+/set");
         mqttClient.setCallback(MQTTClass::receive);
         Serial.println("MQTT Startup Completed");
         esp_task_wdt_reset();
@@ -258,6 +300,10 @@ bool MQTTClass::disconnect() {
     this->unsubscribe("shades/+/windy/set");
     this->unsubscribe("shades/+/position/set");
     this->unsubscribe("shades/+/tiltPosition/set");
+    this->unsubscribe("fans/+/fan_command/set");
+    this->unsubscribe("fans/+/light_command/set");
+    this->unsubscribe("fans/+/preset/set");
+    this->unsubscribe("fans/+/button_+/set");
     this->unsubscribe("groups/+/direction/set");
     this->unsubscribe("groups/+/sunFlag/set");
     this->unsubscribe("groups/+/sunny/set");

@@ -1147,6 +1147,11 @@ static uint8_t parseFanCommand(const String &val) {
   if (val.equalsIgnoreCase("speed4")) return (uint8_t)fan_commands::speed4;
   if (val.equalsIgnoreCase("speed5")) return (uint8_t)fan_commands::speed5;
   if (val.equalsIgnoreCase("speed6")) return (uint8_t)fan_commands::speed6;
+  if (val.equalsIgnoreCase("cooldown1h")) return (uint8_t)fan_commands::cooldown1h;
+  if (val.equalsIgnoreCase("cooldown2h")) return (uint8_t)fan_commands::cooldown2h;
+  if (val.equalsIgnoreCase("cooldown4h")) return (uint8_t)fan_commands::cooldown4h;
+  if (val.equalsIgnoreCase("mute")) return (uint8_t)fan_commands::mute;
+  if (val.equalsIgnoreCase("invert")) return (uint8_t)fan_commands::invert;
   return 255;
 }
 
