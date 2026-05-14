@@ -1158,6 +1158,7 @@ class UIBinder {
         }
         somfy.showEditShade(false);
         somfy.showEditGroup(false);
+        somfy.showEditFan(false);
     }
 }
 var ui = new UIBinder();
@@ -1971,6 +1972,7 @@ class Somfy {
                 document.getElementById('spanMaxRooms').innerText = somfy.maxRooms || 0;
                 document.getElementById('spanMaxShades').innerText = somfy.maxShades;
                 document.getElementById('spanMaxGroups').innerText = somfy.maxGroups;
+                document.getElementById('spanMaxFans').innerText = somfy.maxFans || 16;
                 ui.toElement(document.getElementById('divTransceiverSettings'), somfy);
                 if (somfy.transceiver.config.radioInit) {
                     document.getElementById('divRadioError').style.display = 'none';
@@ -1982,6 +1984,7 @@ class Somfy {
                 this.setRoomsList(somfy.rooms);
                 this.setShadesList(somfy.shades);
                 this.setGroupsList(somfy.groups);
+                if (typeof somfy.fans !== 'undefined') this.setFansList(somfy.fans);
                 this.setRepeaterList(somfy.repeaters);
                 if (typeof somfy.version !== 'undefined') firmware.procFwStatus(somfy.version);
             }
@@ -2151,6 +2154,7 @@ class Somfy {
             let rs = document.getElementById('divRoomSelector');
             let ss = document.getElementById('divShadeControls');
             let gs = document.getElementById('divGroupControls');
+            let fs = document.getElementById('divFanControls');
             let ctls = ss.querySelectorAll('.somfyShadeCtl');
             for (let i = 0; i < ctls.length; i++) {
                 let x = ctls[i];
@@ -2158,6 +2162,12 @@ class Somfy {
                     x.setAttribute('data-roomid', '0');
             }
             ctls = gs.querySelectorAll('.somfyGroupCtl');
+            for (let i = 0; i < ctls.length; i++) {
+                let x = ctls[i];
+                if (parseInt(x.getAttribute('data-roomid'), 10) === room.roomId)
+                    x.setAttribute('data-roomid', '0');
+            }
+            ctls = fs.querySelectorAll('.somfyFanCtl');
             for (let i = 0; i < ctls.length; i++) {
                 let x = ctls[i];
                 if (parseInt(x.getAttribute('data-roomid'), 10) === room.roomId)
@@ -2191,6 +2201,15 @@ class Somfy {
             else
                 x.style.display = '';
         }
+        let fs = document.getElementById('divFanControls');
+        ctls = fs.querySelectorAll('.somfyFanCtl');
+        for (let i = 0; i < ctls.length; i++) {
+            let x = ctls[i];
+            if (roomId !== 0 && parseInt(x.getAttribute('data-roomid'), 10) !== roomId)
+                x.style.display = 'none';
+            else
+                x.style.display = '';
+        }
     }
     setRoomsList(rooms) {
         let divCfg = '';
@@ -2214,6 +2233,7 @@ class Somfy {
         document.getElementById('divRoomList').innerHTML = divCfg;
         document.getElementById('selShadeRoom').innerHTML = divOpts;
         document.getElementById('selGroupRoom').innerHTML = divOpts;
+        document.getElementById('selFanRoom').innerHTML = divOpts;
         //roomControls.innerHTML = divCtl;
         this.setListDraggable(document.getElementById('divRoomList'), '.room-draggable', (list) => {
             // Get the shade order
@@ -2428,6 +2448,41 @@ class Somfy {
                 }
             });
         });
+    }
+    setFansList(fans) {
+        let divCfg = '';
+        let divCtl = '';
+        fans = typeof fans === 'undefined' ? [] : fans;
+        fans.sort((a, b) => { return a.sortOrder - b.sortOrder });
+        let roomId = parseInt(document.getElementById('divRoomSelector').getAttribute('data-roomid'), 10);
+        for (let i = 0; i < fans.length; i++) {
+            let fan = fans[i];
+            let room = _rooms.find(x => x.roomId === fan.roomId) || { roomId: 0, name: '' };
+            divCfg += `<div class="somfyShade" data-roomid="${fan.roomId}" data-fanid="${fan.fanId}" data-address="${fan.address}">`;
+            divCfg += `<div class="button-outline" onclick="somfy.openEditFan(${fan.fanId});"><i class="icss-edit"></i></div>`;
+            divCfg += '<div class="shade-name">';
+            divCfg += `<div class="cfg-room">${room.name}</div>`;
+            divCfg += `<div class="">${fan.name}</div>`;
+            divCfg += '</div>';
+            divCfg += `<span class="shade-address">${fan.address}</span>`;
+            divCfg += `<div class="button-outline" onclick="somfy.deleteFan(${fan.fanId});"><i class="icss-trash"></i></div>`;
+            divCfg += '</div>';
+            divCtl += `<div class="somfyShadeCtl somfyFanCtl" style="height:auto;min-height:60px;flex-wrap:wrap;${roomId === 0 || roomId === room.roomId ? '' : 'display:none'}" data-fanid="${fan.fanId}" data-roomid="${fan.roomId}" data-address="${fan.address}">`;
+            divCtl += `<div class="shade-icon" style="font-size:32px;"><i class="icss-lightbulb-o"></i></div>`;
+            divCtl += `<div class="shade-name" style="white-space:nowrap;">`;
+            divCtl += `<span class="shadectl-room">${room.name}</span>`;
+            divCtl += `<span class="shadectl-name">${fan.name}</span>`;
+            divCtl += '</div>';
+            divCtl += `<div class="shadectl-buttons fanctl-buttons" style="display:flex;float:none;flex-wrap:wrap;justify-content:center;gap:4px;padding:4px 4px 8px 4px;width:100%;">`;
+            divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'light');"><i class="icss-lightbulb-o"></i></div>`;
+            divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'fan');"><i class="icss-somfy-toggle" style="margin-top:-2px;"></i></div>`;
+            for (let speed = 1; speed <= 6; speed++) {
+                divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;font-size:0.9em;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'speed${speed}');"><span>${speed}</span></div>`;
+            }
+            divCtl += '</div>';
+        }
+        document.getElementById('divFanList').innerHTML = divCfg;
+        document.getElementById('divFanControls').innerHTML = divCtl;
     }
     setListDraggable(list, itemclass, onChanged) {
         let items = list.querySelectorAll(itemclass);
@@ -3147,6 +3202,39 @@ class Somfy {
             });
         }
     }
+    openEditFan(fanId) {
+        let elFan = document.getElementById('somfyFan');
+        if (typeof fanId === 'undefined' || fanId === null) {
+            getJSONSync('/getNextFanId', (err, fan) => {
+                document.getElementById('btnSaveFan').innerText = 'Add Fan';
+                if (err) ui.serviceError(err);
+                else {
+                    console.log(fan);
+                    elFan.setAttribute('data-new', 'true');
+                    elFan.setAttribute('data-sortorder', '0');
+                    document.getElementById('spanFanId').innerText = fan.fanId;
+                    ui.toElement(elFan, { name: '', address: '', roomId: 0 });
+                    this.showEditFan(true);
+                    document.getElementById('btnSaveFan').style.display = 'inline-block';
+                }
+            });
+        }
+        else {
+            document.getElementById('btnSaveFan').innerText = 'Save Fan';
+            getJSONSync(`/fan?fanId=${fanId}`, (err, fan) => {
+                if (err) ui.serviceError(err);
+                else {
+                    console.log(fan);
+                    elFan.setAttribute('data-new', 'false');
+                    elFan.setAttribute('data-sortorder', isNaN(parseInt(fan.sortOrder, 10)) ? '0' : fan.sortOrder);
+                    document.getElementById('spanFanId').innerText = fan.fanId;
+                    ui.toElement(elFan, fan);
+                    this.showEditFan(true);
+                    document.getElementById('btnSaveFan').style.display = 'inline-block';
+                }
+            });
+        }
+    }
     showEditRoom(bShow) {
         let el = document.getElementById('divLinking');
         if (el) el.remove();
@@ -3163,6 +3251,7 @@ class Somfy {
         if (bShow) {
             this.showEditGroup(false);
             this.showEditShade(false);
+            this.showEditFan(false);
         }
     }
     showEditShade(bShow) {
@@ -3181,6 +3270,7 @@ class Somfy {
         if (bShow) {
             this.showEditGroup(false);
             this.showEditRoom(false);
+            this.showEditFan(false);
         }
     }
     showEditGroup(bShow) {
@@ -3199,8 +3289,28 @@ class Somfy {
         if (bShow) {
             this.showEditRoom(false);
             this.showEditShade(false);
+            this.showEditFan(false);
         }
 
+    }
+    showEditFan(bShow) {
+        let el = document.getElementById('divLinking');
+        if (el) el.remove();
+        el = document.getElementById('divLinkRepeater');
+        if (el) el.remove();
+        el = document.getElementById('divPairing');
+        if (el) el.remove();
+        el = document.getElementById('divRollingCode');
+        if (el) el.remove();
+        el = document.getElementById('somfyFan');
+        if (el) el.style.display = bShow ? '' : 'none';
+        el = document.getElementById('divFanListContainer');
+        if (el) el.style.display = bShow ? 'none' : '';
+        if (bShow) {
+            this.showEditRoom(false);
+            this.showEditShade(false);
+            this.showEditGroup(false);
+        }
     }
     saveRoom() {
         let roomId = parseInt(document.getElementById('spanRoomId').innerText, 10);
@@ -3361,6 +3471,48 @@ class Somfy {
             }
         }
     }
+    saveFan() {
+        let elFan = document.getElementById('somfyFan');
+        let fanId = parseInt(document.getElementById('spanFanId').innerText, 10);
+        let sortOrder = parseInt(elFan.getAttribute('data-sortorder'), 10);
+        let isNew = makeBool(elFan.getAttribute('data-new'));
+        let obj = ui.fromElement(elFan);
+        let valid = true;
+        if (valid && (isNaN(obj.address) || obj.address < 1 || obj.address > 1048575)) {
+            ui.errorMessage(document.getElementById('divSomfySettings'), 'The remote address must be a number between 1 and 1048575.  This number must be unique for all fans.');
+            valid = false;
+        }
+        if (valid && (typeof obj.name !== 'string' || obj.name === '' || obj.name.length > 20)) {
+            ui.errorMessage(document.getElementById('divSomfySettings'), 'You must provide a name for the fan between 1 and 20 characters.');
+            valid = false;
+        }
+        if (valid) {
+            if (isNew) {
+                putJSONSync('/addFan', { name: obj.name, address: obj.address, roomId: isNaN(obj.roomId) ? 0 : obj.roomId }, (err, fan) => {
+                    if (err) {
+                        ui.serviceError(err);
+                        console.log(err);
+                    }
+                    else {
+                        console.log(fan);
+                        elFan.setAttribute('data-new', 'false');
+                        elFan.setAttribute('data-sortorder', isNaN(parseInt(fan.sortOrder, 10)) ? '0' : fan.sortOrder);
+                        document.getElementById('spanFanId').innerText = fan.fanId;
+                        document.getElementById('btnSaveFan').innerText = 'Save Fan';
+                        document.getElementById('btnSaveFan').style.display = 'inline-block';
+                        this.updateFanList();
+                    }
+                });
+            }
+            else {
+                putJSONSync('/saveFan', { fanId: fanId, name: obj.name, address: obj.address, roomId: isNaN(obj.roomId) ? 0 : obj.roomId, sortOrder: isNaN(sortOrder) ? 0 : sortOrder }, (err, fan) => {
+                    if (err) ui.serviceError(err);
+                    else this.updateFanList();
+                    console.log(fan);
+                });
+            }
+        }
+    }
     updateRoomsList() {
         getJSONSync('/rooms', (err, shades) => {
             if (err) {
@@ -3396,6 +3548,18 @@ class Somfy {
                 console.log(groups);
                 // Create the groups list.
                 this.setGroupsList(groups);
+            }
+        });
+    }
+    updateFanList() {
+        getJSONSync('/fans', (err, fans) => {
+            if (err) {
+                console.log(err);
+                ui.serviceError(err);
+            }
+            else {
+                console.log(fans);
+                this.setFansList(fans);
             }
         });
     }
@@ -3480,6 +3644,29 @@ class Somfy {
                         prompt.querySelector('.sub-message').innerHTML = `<p>Press YES to delete the ${group.name} group or NO to cancel this operation.</p>`;
                         
                     }
+                }
+            });
+        }
+    }
+    deleteFan(fanId) {
+        let valid = true;
+        if (isNaN(fanId) || fanId <= 0) {
+            ui.errorMessage('A valid fan id was not supplied.');
+            valid = false;
+        }
+        if (valid) {
+            getJSONSync(`/fan?fanId=${fanId}`, (err, fan) => {
+                if (err) ui.serviceError(err);
+                else {
+                    let prompt = ui.promptMessage(`Are you sure you want to delete this fan?`, () => {
+                        ui.clearErrors();
+                        putJSONSync('/deleteFan', { fanId: fanId }, (err, f) => {
+                            if (err) ui.serviceError(err);
+                            else this.updateFanList();
+                            prompt.remove();
+                        });
+                    });
+                    prompt.querySelector('.sub-message').innerHTML = `<p>Press YES to delete ${fan.name} or NO to cancel this operation.</p>`;
                 }
             });
         }
@@ -3840,6 +4027,11 @@ class Somfy {
         if (typeof repeat === 'number') obj.repeat = parseInt(repeat);
         putJSON('/groupCommand', obj, (err, group) => {
             if (typeof cb === 'function') cb(err, group);
+        });
+    }
+    sendFanCommand(fanId, command, cb) {
+        putJSON('/fanCommand', { fanId: fanId, command: command }, (err, fan) => {
+            if (typeof cb === 'function') cb(err, fan);
         });
     }
     sendTiltCommand(shadeId, command, cb) {
@@ -4800,4 +4992,3 @@ class Firmware {
     }
 }
 var firmware = new Firmware();
-
