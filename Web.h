@@ -31,6 +31,9 @@ class Web {
     void handleDownloadFirmware(WebServer &server);
     void handleBackup(WebServer &server, bool attach = false);
     void handleReboot(WebServer &server);
+    void handleGetFans(WebServer &server);
+    void handleFan(WebServer &server);
+    void handleFanCommand(WebServer &server);
     void handleDeserializationError(WebServer &server, DeserializationError &err);
     void begin();
     void loop();

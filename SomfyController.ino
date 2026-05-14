@@ -7,6 +7,7 @@
 #include "Sockets.h"
 #include "Utils.h"
 #include "Somfy.h"
+#include "Fan.h"
 #include "MQTT.h"
 #include "GitOTA.h"
 
@@ -16,6 +17,7 @@ SocketEmitter sockEmit;
 Network net;
 rebootDelay_t rebootDelay;
 SomfyShadeController somfy;
+FanController fanCtrl(somfy.transceiver);
 MQTTClass mqtt;
 GitUpdater git;
 
@@ -36,6 +38,7 @@ void setup() {
   delay(1000);
   net.setup();  
   somfy.begin();
+  fanCtrl.begin();
   //git.checkForUpdate();
   esp_task_wdt_init(7, true); //enable panic so ESP32 restarts
   esp_task_wdt_add(NULL); //add current thread to WDT watch
