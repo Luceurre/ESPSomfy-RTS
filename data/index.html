@@ -800,6 +800,7 @@
                             </div>
                             <div id="divSomfyFanButtons" class="shadectl-buttons" style="float:none;display:flex;flex-wrap:wrap;justify-content:center;gap:7px;margin-top:-10px;position:relative;">
                                 <div class="button-outline" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'light');"><i class="icss-lightbulb-o"></i></div>
+                                <div class="button-outline" style="width:44px;text-align:center;padding:10px;font-size:0.85em;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'color');"><span>🎨</span></div>
                                 <div class="button-outline toggle-button" style="width:127px;text-align:center;border-radius:33%;font-size:2em;padding:10px;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'fan');"><i class="icss-somfy-toggle" style="margin-top:-4px;"></i></div>
                                 <div class="button-outline" style="width:44px;text-align:center;padding:10px;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'speed1');"><span>1</span></div>
                                 <div class="button-outline" style="width:44px;text-align:center;padding:10px;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'speed2');"><span>2</span></div>
@@ -807,6 +808,11 @@
                                 <div class="button-outline" style="width:44px;text-align:center;padding:10px;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'speed4');"><span>4</span></div>
                                 <div class="button-outline" style="width:44px;text-align:center;padding:10px;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'speed5');"><span>5</span></div>
                                 <div class="button-outline" style="width:44px;text-align:center;padding:10px;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'speed6');"><span>6</span></div>
+                                <div class="button-outline" style="width:44px;text-align:center;padding:10px;font-size:0.85em;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'mute');"><span>M</span></div>
+                                <div class="button-outline" style="width:44px;text-align:center;padding:10px;font-size:0.85em;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'invert');"><span>↻</span></div>
+                                <div class="button-outline" style="width:44px;text-align:center;padding:10px;font-size:0.85em;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'cooldown1h');"><span>1h</span></div>
+                                <div class="button-outline" style="width:44px;text-align:center;padding:10px;font-size:0.85em;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'cooldown2h');"><span>2h</span></div>
+                                <div class="button-outline" style="width:44px;text-align:center;padding:10px;font-size:0.85em;" onclick="somfy.sendFanCommand(parseInt(document.getElementById('spanFanId').innerText, 10), 'cooldown4h');"><span>4h</span></div>
                             </div>
                             <div class="button-container" style="margin-top:-10px;padding-left:7px;padding-right:7px;">
                                 <button id="btnSaveFan" type="button" onclick="somfy.saveFan();">

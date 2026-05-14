@@ -2475,10 +2475,16 @@ class Somfy {
             divCtl += '</div>';
             divCtl += `<div class="shadectl-buttons fanctl-buttons" style="display:flex;float:none;flex-wrap:wrap;justify-content:center;gap:4px;padding:4px 4px 8px 4px;width:100%;">`;
             divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'light');"><i class="icss-lightbulb-o"></i></div>`;
+            divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;font-size:0.7em;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'color');"><span>🎨</span></div>`;
             divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'fan');"><i class="icss-somfy-toggle" style="margin-top:-2px;"></i></div>`;
             for (let speed = 1; speed <= 6; speed++) {
                 divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;font-size:0.9em;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'speed${speed}');"><span>${speed}</span></div>`;
             }
+            divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;font-size:0.7em;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'mute');"><span>M</span></div>`;
+            divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;font-size:0.6em;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'invert');"><span>↻</span></div>`;
+            divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;font-size:0.7em;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'cooldown1h');"><span>1h</span></div>`;
+            divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;font-size:0.7em;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'cooldown2h');"><span>2h</span></div>`;
+            divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;font-size:0.7em;" onclick="event.stopPropagation(); somfy.sendFanCommand(${fan.fanId}, 'cooldown4h');"><span>4h</span></div>`;
             divCtl += '</div>';
         }
         document.getElementById('divFanList').innerHTML = divCfg;
