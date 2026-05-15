@@ -252,6 +252,7 @@ inline bool FanController::sendCommand(uint8_t fanId, fan_commands cmd) {
       break;
     case fan_commands::color:
       fan->lightColor = (fan->lightColor == 0) ? 1 : 0;
+      fan->lightOn = true;
       break;
     case fan_commands::invert:
       fan->inverted = !fan->inverted;
