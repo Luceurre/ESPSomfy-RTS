@@ -63,6 +63,14 @@ struct fan_device_t {
   uint8_t N4 = 0;
   uint8_t roomId = 0;
   int8_t sortOrder = 0;
+  bool fanOn = false;
+  bool lightOn = false;
+  uint8_t lightColor = 0;
+  bool inverted = false;
+  uint8_t speed = 0;
+  bool muted = false;
+  uint32_t timerSetAt = 0;
+  uint16_t timerDuration = 0;
 
   void clear();
   bool save();
@@ -83,6 +91,7 @@ class FanController {
     bool begin();
     void loop();
     bool sendCommand(uint8_t fanId, fan_commands cmd);
+    void applyState(uint8_t fanId, JsonObject &obj);
     fan_device_t *addFan();
     bool deleteFan(uint8_t fanId);
     fan_device_t *getFanById(uint8_t fanId);
@@ -113,6 +122,14 @@ inline void fan_device_t::clear() {
   this->N4 = 0;
   this->roomId = 0;
   this->sortOrder = 0;
+  this->fanOn = false;
+  this->lightOn = false;
+  this->lightColor = 0;
+  this->inverted = false;
+  this->speed = 0;
+  this->muted = false;
+  this->timerSetAt = 0;
+  this->timerDuration = 0;
 }
 inline bool fan_device_t::save() { return true; }
 inline bool fan_device_t::fromJSON(JsonObject &obj) {
@@ -133,6 +150,14 @@ inline bool fan_device_t::fromJSON(JsonObject &obj) {
   if(obj.containsKey("N2")) this->N2 = obj["N2"].as<uint8_t>() & 0x0F;
   if(obj.containsKey("N3")) this->N3 = obj["N3"].as<uint8_t>() & 0x0F;
   if(obj.containsKey("N4")) this->N4 = obj["N4"].as<uint8_t>() & 0x0F;
+  if(obj.containsKey("fanOn")) this->fanOn = obj["fanOn"].as<bool>();
+  if(obj.containsKey("lightOn")) this->lightOn = obj["lightOn"].as<bool>();
+  if(obj.containsKey("lightColor")) this->lightColor = obj["lightColor"].as<uint8_t>();
+  if(obj.containsKey("inverted")) this->inverted = obj["inverted"].as<bool>();
+  if(obj.containsKey("speed")) this->speed = obj["speed"].as<uint8_t>();
+  if(obj.containsKey("muted")) this->muted = obj["muted"].as<bool>();
+  if(obj.containsKey("timerSetAt")) this->timerSetAt = obj["timerSetAt"].as<uint32_t>();
+  if(obj.containsKey("timerDuration")) this->timerDuration = obj["timerDuration"].as<uint16_t>();
   return true;
 }
 inline void fan_device_t::toJSON(JsonResponse &json) {
@@ -151,6 +176,14 @@ inline void fan_device_t::toJSON(JsonResponse &json) {
   json.addElem("N2", this->N2);
   json.addElem("N3", this->N3);
   json.addElem("N4", this->N4);
+  json.addElem("fanOn", this->fanOn);
+  json.addElem("lightOn", this->lightOn);
+  json.addElem("lightColor", this->lightColor);
+  json.addElem("inverted", this->inverted);
+  json.addElem("speed", this->speed);
+  json.addElem("muted", this->muted);
+  json.addElem("timerSetAt", this->timerSetAt);
+  json.addElem("timerDuration", this->timerDuration);
 }
 
 inline uint32_t FanController::buildCode(const fan_device_t &fan, fan_commands cmd) {
@@ -209,7 +242,77 @@ inline bool FanController::sendCommand(uint8_t fanId, fan_commands cmd) {
   fan_device_t *fan = this->getFanById(fanId);
   if(fan == nullptr || !this->transceiver.config.enabled) return false;
   this->sendFanFrame(this->buildCode(*fan, cmd));
+  switch(cmd) {
+    case fan_commands::fan:
+      fan->fanOn = !fan->fanOn;
+      if(!fan->fanOn) fan->speed = 0;
+      break;
+    case fan_commands::light:
+      fan->lightOn = !fan->lightOn;
+      break;
+    case fan_commands::color:
+      fan->lightColor = (fan->lightColor == 0) ? 1 : 0;
+      break;
+    case fan_commands::invert:
+      fan->inverted = !fan->inverted;
+      break;
+    case fan_commands::mute:
+      fan->muted = !fan->muted;
+      break;
+    case fan_commands::speed1:
+      fan->speed = 1;
+      fan->fanOn = true;
+      break;
+    case fan_commands::speed2:
+      fan->speed = 2;
+      fan->fanOn = true;
+      break;
+    case fan_commands::speed3:
+      fan->speed = 3;
+      fan->fanOn = true;
+      break;
+    case fan_commands::speed4:
+      fan->speed = 4;
+      fan->fanOn = true;
+      break;
+    case fan_commands::speed5:
+      fan->speed = 5;
+      fan->fanOn = true;
+      break;
+    case fan_commands::speed6:
+      fan->speed = 6;
+      fan->fanOn = true;
+      break;
+    case fan_commands::cooldown1h:
+      fan->timerSetAt = millis();
+      fan->timerDuration = 60;
+      break;
+    case fan_commands::cooldown2h:
+      fan->timerSetAt = millis();
+      fan->timerDuration = 120;
+      break;
+    case fan_commands::cooldown4h:
+      fan->timerSetAt = millis();
+      fan->timerDuration = 240;
+      break;
+  }
+  this->saveFans();
+  this->publishState(fanId);
   return true;
+}
+inline void FanController::applyState(uint8_t fanId, JsonObject &obj) {
+  fan_device_t *fan = this->getFanById(fanId);
+  if(fan == nullptr) return;
+  if(obj.containsKey("fanOn")) fan->fanOn = obj["fanOn"].as<bool>();
+  if(obj.containsKey("lightOn")) fan->lightOn = obj["lightOn"].as<bool>();
+  if(obj.containsKey("lightColor")) fan->lightColor = obj["lightColor"].as<uint8_t>();
+  if(obj.containsKey("inverted")) fan->inverted = obj["inverted"].as<bool>();
+  if(obj.containsKey("speed")) fan->speed = obj["speed"].as<uint8_t>();
+  if(obj.containsKey("muted")) fan->muted = obj["muted"].as<bool>();
+  if(obj.containsKey("timerSetAt")) fan->timerSetAt = obj["timerSetAt"].as<uint32_t>();
+  if(obj.containsKey("timerDuration")) fan->timerDuration = obj["timerDuration"].as<uint16_t>();
+  this->saveFans();
+  this->publishState(fanId);
 }
 inline fan_device_t *FanController::addFan() {
   fan_device_t *fan = nullptr;
@@ -284,6 +387,22 @@ inline bool FanController::saveFans() {
       file.print(this->fans[i].roomId);
       file.print(",\"sortOrder\":");
       file.print(this->fans[i].sortOrder);
+      file.print(",\"fanOn\":");
+      file.print(this->fans[i].fanOn);
+      file.print(",\"lightOn\":");
+      file.print(this->fans[i].lightOn);
+      file.print(",\"lightColor\":");
+      file.print(this->fans[i].lightColor);
+      file.print(",\"inverted\":");
+      file.print(this->fans[i].inverted);
+      file.print(",\"speed\":");
+      file.print(this->fans[i].speed);
+      file.print(",\"muted\":");
+      file.print(this->fans[i].muted);
+      file.print(",\"timerSetAt\":");
+      file.print(this->fans[i].timerSetAt);
+      file.print(",\"timerDuration\":");
+      file.print(this->fans[i].timerDuration);
       file.print("}");
     }
   }
@@ -312,8 +431,8 @@ inline bool FanController::loadFans() {
 }
 inline void FanController::publishDisco() {
   if(!mqtt.connected() || !settings.MQTT.pubDisco) return;
-  const char *buttonCommands[] = {"color", "mute", "invert", "cooldown1h", "cooldown2h", "cooldown4h"};
-  const char *buttonNames[] = {"Color", "Mute", "Invert", "Cooldown 1h", "Cooldown 2h", "Cooldown 4h"};
+  const char *buttonCommands[] = {"cooldown1h", "cooldown2h", "cooldown4h"};
+  const char *buttonNames[] = {"Cooldown 1h", "Cooldown 2h", "Cooldown 4h"};
   char topic[128] = "";
   char entityName[64] = "";
   for(uint8_t i = 0; i < MAX_FANS; i++) {
@@ -390,6 +509,126 @@ inline void FanController::publishDisco() {
     snprintf(topic, sizeof(topic), "%s/light/%d/config", settings.MQTT.discoTopic, fan.fanId);
     mqtt.publishDisco(topic, obj, true);
 
+    doc.clear();
+    obj = doc.to<JsonObject>();
+    snprintf(topic, sizeof(topic), "%s/fans/%d", settings.MQTT.rootTopic, fan.fanId);
+    obj["~"] = topic;
+    dobj = obj.createNestedObject("device");
+    dobj["hw_version"] = settings.fwVersion.name;
+    dobj["name"] = settings.hostname;
+    dobj["mf"] = "rstrouse";
+    arrids = dobj.createNestedArray("identifiers");
+    snprintf(topic, sizeof(topic), "mqtt_espsomfyrts_%s", settings.serverId);
+    arrids.add(topic);
+    dobj["via_device"] = topic;
+    dobj["model"] = "ESPSomfy-RTS MQTT";
+    snprintf(topic, sizeof(topic), "%s/status", settings.MQTT.rootTopic);
+    obj["availability_topic"] = topic;
+    obj["payload_available"] = "online";
+    obj["payload_not_available"] = "offline";
+    snprintf(entityName, sizeof(entityName), "%s Color", fan.name);
+    obj["name"] = entityName;
+    snprintf(topic, sizeof(topic), "mqtt_%s_fan%d_color", settings.serverId, fan.fanId);
+    obj["unique_id"] = topic;
+    obj["command_topic"] = "~/color/set";
+    obj["state_topic"] = "~/color_state";
+    JsonArray colorOptions = obj.createNestedArray("options");
+    colorOptions.add("white");
+    colorOptions.add("yellow");
+    obj["enabled_by_default"] = true;
+    snprintf(topic, sizeof(topic), "%s/select/%d_color/config", settings.MQTT.discoTopic, fan.fanId);
+    mqtt.publishDisco(topic, obj, true);
+
+    doc.clear();
+    obj = doc.to<JsonObject>();
+    snprintf(topic, sizeof(topic), "%s/fans/%d", settings.MQTT.rootTopic, fan.fanId);
+    obj["~"] = topic;
+    dobj = obj.createNestedObject("device");
+    dobj["hw_version"] = settings.fwVersion.name;
+    dobj["name"] = settings.hostname;
+    dobj["mf"] = "rstrouse";
+    arrids = dobj.createNestedArray("identifiers");
+    snprintf(topic, sizeof(topic), "mqtt_espsomfyrts_%s", settings.serverId);
+    arrids.add(topic);
+    dobj["via_device"] = topic;
+    dobj["model"] = "ESPSomfy-RTS MQTT";
+    snprintf(topic, sizeof(topic), "%s/status", settings.MQTT.rootTopic);
+    obj["availability_topic"] = topic;
+    obj["payload_available"] = "online";
+    obj["payload_not_available"] = "offline";
+    snprintf(entityName, sizeof(entityName), "%s Direction", fan.name);
+    obj["name"] = entityName;
+    snprintf(topic, sizeof(topic), "mqtt_%s_fan%d_direction", settings.serverId, fan.fanId);
+    obj["unique_id"] = topic;
+    obj["command_topic"] = "~/direction/set";
+    obj["payload_on"] = "counter_clockwise";
+    obj["payload_off"] = "clockwise";
+    obj["state_topic"] = "~/direction_state";
+    obj["state_on"] = "counter_clockwise";
+    obj["state_off"] = "clockwise";
+    obj["enabled_by_default"] = true;
+    snprintf(topic, sizeof(topic), "%s/switch/%d_direction/config", settings.MQTT.discoTopic, fan.fanId);
+    mqtt.publishDisco(topic, obj, true);
+
+    doc.clear();
+    obj = doc.to<JsonObject>();
+    snprintf(topic, sizeof(topic), "%s/fans/%d", settings.MQTT.rootTopic, fan.fanId);
+    obj["~"] = topic;
+    dobj = obj.createNestedObject("device");
+    dobj["hw_version"] = settings.fwVersion.name;
+    dobj["name"] = settings.hostname;
+    dobj["mf"] = "rstrouse";
+    arrids = dobj.createNestedArray("identifiers");
+    snprintf(topic, sizeof(topic), "mqtt_espsomfyrts_%s", settings.serverId);
+    arrids.add(topic);
+    dobj["via_device"] = topic;
+    dobj["model"] = "ESPSomfy-RTS MQTT";
+    snprintf(topic, sizeof(topic), "%s/status", settings.MQTT.rootTopic);
+    obj["availability_topic"] = topic;
+    obj["payload_available"] = "online";
+    obj["payload_not_available"] = "offline";
+    snprintf(entityName, sizeof(entityName), "%s Mute", fan.name);
+    obj["name"] = entityName;
+    snprintf(topic, sizeof(topic), "mqtt_%s_fan%d_mute", settings.serverId, fan.fanId);
+    obj["unique_id"] = topic;
+    obj["command_topic"] = "~/mute/set";
+    obj["payload_on"] = "ON";
+    obj["payload_off"] = "OFF";
+    obj["state_topic"] = "~/mute_state";
+    obj["state_on"] = "ON";
+    obj["state_off"] = "OFF";
+    obj["enabled_by_default"] = true;
+    snprintf(topic, sizeof(topic), "%s/switch/%d_mute/config", settings.MQTT.discoTopic, fan.fanId);
+    mqtt.publishDisco(topic, obj, true);
+
+    doc.clear();
+    obj = doc.to<JsonObject>();
+    snprintf(topic, sizeof(topic), "%s/fans/%d", settings.MQTT.rootTopic, fan.fanId);
+    obj["~"] = topic;
+    dobj = obj.createNestedObject("device");
+    dobj["hw_version"] = settings.fwVersion.name;
+    dobj["name"] = settings.hostname;
+    dobj["mf"] = "rstrouse";
+    arrids = dobj.createNestedArray("identifiers");
+    snprintf(topic, sizeof(topic), "mqtt_espsomfyrts_%s", settings.serverId);
+    arrids.add(topic);
+    dobj["via_device"] = topic;
+    dobj["model"] = "ESPSomfy-RTS MQTT";
+    snprintf(topic, sizeof(topic), "%s/status", settings.MQTT.rootTopic);
+    obj["availability_topic"] = topic;
+    obj["payload_available"] = "online";
+    obj["payload_not_available"] = "offline";
+    snprintf(entityName, sizeof(entityName), "%s Timer", fan.name);
+    obj["name"] = entityName;
+    snprintf(topic, sizeof(topic), "mqtt_%s_fan%d_timer", settings.serverId, fan.fanId);
+    obj["unique_id"] = topic;
+    obj["state_topic"] = "~/timer_state";
+    obj["value_template"] = "{{ value_json.remaining }}";
+    obj["json_attributes_topic"] = "~/timer_state";
+    obj["enabled_by_default"] = true;
+    snprintf(topic, sizeof(topic), "%s/sensor/%d_timer/config", settings.MQTT.discoTopic, fan.fanId);
+    mqtt.publishDisco(topic, obj, true);
+
     for(uint8_t j = 0; j < sizeof(buttonCommands) / sizeof(buttonCommands[0]); j++) {
       doc.clear();
       obj = doc.to<JsonObject>();
@@ -431,6 +670,14 @@ inline void FanController::unpublishDisco() {
     mqtt.unpublish(topic);
     snprintf(topic, sizeof(topic), "%s/light/%d/config", settings.MQTT.discoTopic, this->fans[i].fanId);
     mqtt.unpublish(topic);
+    snprintf(topic, sizeof(topic), "%s/select/%d_color/config", settings.MQTT.discoTopic, this->fans[i].fanId);
+    mqtt.unpublish(topic);
+    snprintf(topic, sizeof(topic), "%s/switch/%d_direction/config", settings.MQTT.discoTopic, this->fans[i].fanId);
+    mqtt.unpublish(topic);
+    snprintf(topic, sizeof(topic), "%s/switch/%d_mute/config", settings.MQTT.discoTopic, this->fans[i].fanId);
+    mqtt.unpublish(topic);
+    snprintf(topic, sizeof(topic), "%s/sensor/%d_timer/config", settings.MQTT.discoTopic, this->fans[i].fanId);
+    mqtt.unpublish(topic);
     for(uint8_t j = 0; j < sizeof(buttonCommands) / sizeof(buttonCommands[0]); j++) {
       snprintf(topic, sizeof(topic), "%s/button/%d_%s/config", settings.MQTT.discoTopic, this->fans[i].fanId, buttonCommands[j]);
       mqtt.unpublish(topic);
@@ -459,14 +706,40 @@ inline void FanController::publish() {
   this->publishDisco();
 }
 inline void FanController::publishState(uint8_t fanId) {
-  if(!mqtt.connected() || this->getFanById(fanId) == nullptr) return;
+  if(!mqtt.connected()) return;
+  fan_device_t *fan = this->getFanById(fanId);
+  if(fan == nullptr) return;
   char topic[128] = "";
   snprintf(topic, sizeof(topic), "fans/%d/fan_state", fanId);
-  mqtt.publish(topic, "OFF", true);
+  mqtt.publish(topic, fan->fanOn ? "ON" : "OFF", true);
   snprintf(topic, sizeof(topic), "fans/%d/light_state", fanId);
-  mqtt.publish(topic, "OFF", true);
+  mqtt.publish(topic, fan->lightOn ? "ON" : "OFF", true);
   snprintf(topic, sizeof(topic), "fans/%d/preset", fanId);
-  mqtt.publish(topic, "", true);
+  if(fan->speed > 0 && fan->speed <= 6) {
+    const char *speeds[] = {"", "speed1", "speed2", "speed3", "speed4", "speed5", "speed6"};
+    mqtt.publish(topic, speeds[fan->speed], true);
+  }
+  else {
+    mqtt.publish(topic, "", true);
+  }
+  snprintf(topic, sizeof(topic), "fans/%d/color_state", fanId);
+  mqtt.publish(topic, fan->lightColor == 0 ? "white" : "yellow", true);
+  snprintf(topic, sizeof(topic), "fans/%d/direction_state", fanId);
+  mqtt.publish(topic, fan->inverted ? "counter_clockwise" : "clockwise", true);
+  snprintf(topic, sizeof(topic), "fans/%d/mute_state", fanId);
+  mqtt.publish(topic, fan->muted ? "ON" : "OFF", true);
+  snprintf(topic, sizeof(topic), "fans/%d/timer_state", fanId);
+  if(fan->timerDuration > 0 && fan->timerSetAt > 0) {
+    int32_t elapsed = static_cast<int32_t>((millis() - fan->timerSetAt) / 60000);
+    int32_t remaining = fan->timerDuration - elapsed;
+    if(remaining < 0) remaining = 0;
+    char timerPayload[64];
+    snprintf(timerPayload, sizeof(timerPayload), "{\"duration\":%u,\"remaining\":%d}", fan->timerDuration, remaining);
+    mqtt.publish(topic, timerPayload, true);
+  }
+  else {
+    mqtt.publish(topic, "{\"duration\":0,\"remaining\":0}", true);
+  }
 }
 inline void FanController::subscribe() {
   mqtt.subscribe("fans/+/+/set");

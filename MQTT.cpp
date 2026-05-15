@@ -276,7 +276,7 @@ void MQTTClass::receive(const char *topic, byte *payload, uint32_t length) {
   char entityType[8] = {'\0'};
   char entityId[4] = {'\0'};
   char command[32] = {'\0'};
-  char value[16] = {'\0'};
+  char value[64] = {'\0'};
 
   uint8_t i = 0;
   while(ndx < len && topic[ndx] == '/') ndx++;
@@ -306,14 +306,40 @@ void MQTTClass::receive(const char *topic, byte *payload, uint32_t length) {
   if(strcmp(entityType, "fans") != 0) return;
 
   const uint8_t fanId = atoi(entityId);
-  if(fanCtrl.getFanById(fanId) == nullptr) return;
+  fan_device_t *fan = fanCtrl.getFanById(fanId);
+  if(fan == nullptr) return;
+
+  if(strcmp(command, "state") == 0) {
+    DynamicJsonDocument doc(512);
+    DeserializationError err = deserializeJson(doc, payload, length);
+    if(!err) {
+      JsonObject obj = doc.as<JsonObject>();
+      fanCtrl.applyState(fanId, obj);
+    }
+    esp_task_wdt_reset();
+    return;
+  }
 
   uint8_t cmdByte = 255;
   if(strcmp(command, "fan_command") == 0) {
-    if(strcmp(value, "ON") == 0 || strcmp(value, "OFF") == 0) cmdByte = static_cast<uint8_t>(fan_commands::fan);
+    if(strcmp(value, "ON") == 0) {
+      if(fan->fanOn) return;
+      cmdByte = static_cast<uint8_t>(fan_commands::fan);
+    }
+    else if(strcmp(value, "OFF") == 0) {
+      if(!fan->fanOn) return;
+      cmdByte = static_cast<uint8_t>(fan_commands::fan);
+    }
   }
   else if(strcmp(command, "light_command") == 0) {
-    if(strcmp(value, "ON") == 0 || strcmp(value, "OFF") == 0) cmdByte = static_cast<uint8_t>(fan_commands::light);
+    if(strcmp(value, "ON") == 0) {
+      if(fan->lightOn) return;
+      cmdByte = static_cast<uint8_t>(fan_commands::light);
+    }
+    else if(strcmp(value, "OFF") == 0) {
+      if(!fan->lightOn) return;
+      cmdByte = static_cast<uint8_t>(fan_commands::light);
+    }
   }
   else if(strcmp(command, "preset") == 0) {
     if(strcmp(value, "speed1") == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed1);
@@ -322,6 +348,36 @@ void MQTTClass::receive(const char *topic, byte *payload, uint32_t length) {
     else if(strcmp(value, "speed4") == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed4);
     else if(strcmp(value, "speed5") == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed5);
     else if(strcmp(value, "speed6") == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed6);
+  }
+  else if(strcmp(command, "color") == 0) {
+    if(strcmp(value, "white") == 0) {
+      if(fan->lightColor == 0) return;
+      cmdByte = static_cast<uint8_t>(fan_commands::color);
+    }
+    else if(strcmp(value, "yellow") == 0) {
+      if(fan->lightColor == 1) return;
+      cmdByte = static_cast<uint8_t>(fan_commands::color);
+    }
+  }
+  else if(strcmp(command, "direction") == 0) {
+    if(strcmp(value, "counter_clockwise") == 0) {
+      if(fan->inverted) return;
+      cmdByte = static_cast<uint8_t>(fan_commands::invert);
+    }
+    else if(strcmp(value, "clockwise") == 0) {
+      if(!fan->inverted) return;
+      cmdByte = static_cast<uint8_t>(fan_commands::invert);
+    }
+  }
+  else if(strcmp(command, "mute") == 0) {
+    if(strcmp(value, "ON") == 0) {
+      if(fan->muted) return;
+      cmdByte = static_cast<uint8_t>(fan_commands::mute);
+    }
+    else if(strcmp(value, "OFF") == 0) {
+      if(!fan->muted) return;
+      cmdByte = static_cast<uint8_t>(fan_commands::mute);
+    }
   }
   else if(strncmp(command, "button_", 7) == 0 && strcmp(value, "PRESS") == 0) {
     const char *buttonCommand = command + 7;

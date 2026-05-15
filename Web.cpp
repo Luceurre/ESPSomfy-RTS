@@ -1238,12 +1238,76 @@ void Web::begin() {
   apiServer.on("/fans", []() { webServer.handleGetFans(apiServer); });
   apiServer.on("/fan", []() { webServer.handleFan(apiServer); });
   apiServer.on("/fanCommand", []() { webServer.handleFanCommand(apiServer); });
+  apiServer.on("/fanState", []() {
+    webServer.sendCORSHeaders(apiServer);
+    if(apiServer.method() == HTTP_OPTIONS) { apiServer.send(200, "OK"); return; }
+    if(apiServer.method() == HTTP_PUT || apiServer.method() == HTTP_POST) {
+      if(apiServer.hasArg("plain")) {
+        DynamicJsonDocument doc(512);
+        DeserializationError err = deserializeJson(doc, apiServer.arg("plain"));
+        if(err) {
+          webServer.handleDeserializationError(apiServer, err);
+          return;
+        }
+        JsonObject obj = doc.as<JsonObject>();
+        if(obj.containsKey("fanId")) {
+          uint8_t fanId = obj["fanId"];
+          fan_device_t *fan = fanCtrl.getFanById(fanId);
+          if(fan) {
+            fanCtrl.applyState(fanId, obj);
+            JsonResponse resp;
+            resp.beginResponse(&apiServer, g_content, sizeof(g_content));
+            resp.beginObject();
+            fan->toJSON(resp);
+            resp.endObject();
+            resp.endResponse();
+          }
+          else apiServer.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Fan not found.\"}"));
+        }
+        else apiServer.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No fan id.\"}"));
+      }
+      else apiServer.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No fan data.\"}"));
+    }
+    else apiServer.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Invalid Http method\"}"));
+  });
   
   // Web Interface
   server.on("/tiltCommand", []() { webServer.handleTiltCommand(server); });
   server.on("/repeatCommand", []() { webServer.handleRepeatCommand(server); });
   server.on("/shadeCommand", []() { webServer.handleShadeCommand(server); });
   server.on("/groupCommand", []() { webServer.handleGroupCommand(server); });
+  server.on("/fanState", []() {
+    webServer.sendCORSHeaders(server);
+    if(server.method() == HTTP_OPTIONS) { server.send(200, "OK"); return; }
+    if(server.method() == HTTP_PUT || server.method() == HTTP_POST) {
+      if(server.hasArg("plain")) {
+        DynamicJsonDocument doc(512);
+        DeserializationError err = deserializeJson(doc, server.arg("plain"));
+        if(err) {
+          webServer.handleDeserializationError(server, err);
+          return;
+        }
+        JsonObject obj = doc.as<JsonObject>();
+        if(obj.containsKey("fanId")) {
+          uint8_t fanId = obj["fanId"];
+          fan_device_t *fan = fanCtrl.getFanById(fanId);
+          if(fan) {
+            fanCtrl.applyState(fanId, obj);
+            JsonResponse resp;
+            resp.beginResponse(&server, g_content, sizeof(g_content));
+            resp.beginObject();
+            fan->toJSON(resp);
+            resp.endObject();
+            resp.endResponse();
+          }
+          else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Fan not found.\"}"));
+        }
+        else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No fan id.\"}"));
+      }
+      else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No fan data.\"}"));
+    }
+    else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Invalid Http method\"}"));
+  });
   server.on("/setPositions", []() { webServer.handleSetPositions(server); });
   server.on("/setSensor", []() { webServer.handleSetSensor(server); });
   server.on("/upnp.xml", []() { SSDP.schema(server.client()); });
