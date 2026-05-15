@@ -469,16 +469,10 @@ inline void FanController::publishState(uint8_t fanId) {
   mqtt.publish(topic, "", true);
 }
 inline void FanController::subscribe() {
-  mqtt.subscribe("fans/+/fan_command/set");
-  mqtt.subscribe("fans/+/light_command/set");
-  mqtt.subscribe("fans/+/preset/set");
-  mqtt.subscribe("fans/+/button_+/set");
+  mqtt.subscribe("fans/+/+/set");
 }
 inline void FanController::unsubscribe() {
-  mqtt.unsubscribe("fans/+/fan_command/set");
-  mqtt.unsubscribe("fans/+/light_command/set");
-  mqtt.unsubscribe("fans/+/preset/set");
-  mqtt.unsubscribe("fans/+/button_+/set");
+  mqtt.unsubscribe("fans/+/+/set");
 }
 #endif
 

@@ -1,417 +1,411 @@
 #include <WiFi.h>
-#include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
+#include "mqtt_client.h"
 #include "ConfigSettings.h"
 #include "MQTT.h"
-#include "Somfy.h"
 #include "Fan.h"
 #include "Network.h"
 #include "Utils.h"
 
-WiFiClient tcpClient;
-PubSubClient mqttClient(tcpClient);
-
 #define MQTT_MAX_RESPONSE 2048
+
 static char g_content[MQTT_MAX_RESPONSE];
 
 extern ConfigSettings settings;
-extern SomfyShadeController somfy;
 extern FanController fanCtrl;
 extern Network net;
 extern rebootDelay_t rebootDelay;
 
+namespace {
+  bool isTopicAbsolute(const char *topic) {
+    if(topic == nullptr || topic[0] == '\0') return false;
+
+    const size_t rootLen = strlen(settings.MQTT.rootTopic);
+    if(rootLen > 0 && strncmp(topic, settings.MQTT.rootTopic, rootLen) == 0 && (topic[rootLen] == '\0' || topic[rootLen] == '/')) {
+      return true;
+    }
+
+    const size_t discoLen = strlen(settings.MQTT.discoTopic);
+    if(discoLen > 0 && strncmp(topic, settings.MQTT.discoTopic, discoLen) == 0 && (topic[discoLen] == '\0' || topic[discoLen] == '/')) {
+      return true;
+    }
+
+    return false;
+  }
+}
 
 bool MQTTClass::begin() {
   this->suspended = false;
   return true;
 }
+
 bool MQTTClass::end() {
   this->suspended = true;
-  this->disconnect();
-  return true;
+  return this->disconnect();
 }
+
 void MQTTClass::reset() {
   this->disconnect();
   this->lastConnect = 0;
   this->connect();
 }
+
 bool MQTTClass::loop() {
-  if(settings.MQTT.enabled && !rebootDelay.reboot && !this->suspended && !mqttClient.connected()) {
+  if(settings.MQTT.enabled && !rebootDelay.reboot && !this->suspended && net.connected() && this->_client == nullptr) {
     esp_task_wdt_reset();
-    if(!this->connected() && net.connected()) this->connect();
+    this->connect();
   }
-  esp_task_wdt_reset();
-  if(settings.MQTT.enabled) mqttClient.loop();
   return true;
 }
-void MQTTClass::receive(const char *topic, byte*payload, uint32_t length) {
-  esp_task_wdt_reset(); // Make sure we do not reboot here.
-  Serial.print("MQTT Topic:");
-  Serial.print(topic);
-  Serial.print(" payload:");
-  for(uint32_t i=0; i<length; i++)
-    Serial.print((char)payload[i]);
-  Serial.println();
 
-  // We need to start at the last slash in the data
-  uint8_t len = strlen(topic);
-  
+void MQTTClass::buildClientId() {
+  const uint64_t mac = ESP.getEfuseMac();
+  snprintf(this->clientId, sizeof(this->clientId), "client-%08x%08x", static_cast<uint32_t>((mac >> 32) & 0xFFFFFFFF), static_cast<uint32_t>(mac & 0xFFFFFFFF));
+}
+
+void MQTTClass::buildBrokerUri() {
+  snprintf(this->_brokerUri, sizeof(this->_brokerUri), "%s%s:%u", settings.MQTT.protocol, settings.MQTT.hostname, settings.MQTT.port);
+}
+
+bool MQTTClass::buildRootTopic(const char *topic, char *buffer, size_t len) {
+  if(buffer == nullptr || len == 0 || topic == nullptr) return false;
+  if(isTopicAbsolute(topic)) {
+    strlcpy(buffer, topic, len);
+    return strlen(topic) < len;
+  }
+  if(strlen(settings.MQTT.rootTopic) > 0) {
+    return snprintf(buffer, len, "%s/%s", settings.MQTT.rootTopic, topic) < static_cast<int>(len);
+  }
+  strlcpy(buffer, topic, len);
+  return strlen(topic) < len;
+}
+
+bool MQTTClass::buildRawTopic(const char *topic, char *buffer, size_t len) {
+  if(buffer == nullptr || len == 0 || topic == nullptr) return false;
+  strlcpy(buffer, topic, len);
+  return strlen(topic) < len;
+}
+
+void MQTTClass::resetMessageBuffers() {
+  this->_messageTopic[0] = '\0';
+  this->_messagePayload[0] = '\0';
+}
+
+bool MQTTClass::connect() {
+  esp_task_wdt_reset();
+
+  if(this->_client != nullptr) {
+    if(!settings.MQTT.enabled || this->suspended) return this->disconnect();
+    return this->_connected;
+  }
+
+  if(!settings.MQTT.enabled || this->suspended || rebootDelay.reboot || !net.connected()) return false;
+  if(this->lastConnect + 10000 > millis()) return false;
+  if(strlen(settings.MQTT.protocol) == 0 || strlen(settings.MQTT.hostname) == 0) return true;
+
+  this->buildClientId();
+  this->buildBrokerUri();
+  if(strlen(settings.MQTT.rootTopic) > 0) snprintf(this->_lwtTopic, sizeof(this->_lwtTopic), "%s/status", settings.MQTT.rootTopic);
+  else strlcpy(this->_lwtTopic, "status", sizeof(this->_lwtTopic));
+
+  esp_mqtt_client_config_t config = {};
+  config.uri = this->_brokerUri;
+  config.client_id = this->clientId;
+  config.username = strlen(settings.MQTT.username) > 0 ? settings.MQTT.username : nullptr;
+  config.password = strlen(settings.MQTT.password) > 0 ? settings.MQTT.password : nullptr;
+  config.lwt_topic = this->_lwtTopic;
+  config.lwt_msg = "offline";
+  config.lwt_msg_len = 7;
+  config.lwt_qos = 0;
+  config.lwt_retain = 1;
+  config.disable_clean_session = 0;
+  config.disable_auto_reconnect = false;
+  config.keepalive = 60;
+  config.buffer_size = 2048;
+  config.out_buffer_size = 2048;
+  config.network_timeout_ms = 10000;
+  config.reconnect_timeout_ms = 10000;
+  config.user_context = this;
+
+  this->_client = esp_mqtt_client_init(&config);
+  if(this->_client == nullptr) {
+    this->lastConnect = millis();
+    return false;
+  }
+
+  if(esp_mqtt_client_register_event(this->_client, MQTT_EVENT_ANY, MQTTClass::mqttEventHandler, this) != ESP_OK) {
+    esp_mqtt_client_destroy(this->_client);
+    this->_client = nullptr;
+    this->lastConnect = millis();
+    return false;
+  }
+
+  if(esp_mqtt_client_start(this->_client) != ESP_OK) {
+    esp_mqtt_client_destroy(this->_client);
+    this->_client = nullptr;
+    this->lastConnect = millis();
+    return false;
+  }
+
+  this->_clientStarted = true;
+  this->_connected = false;
+  this->_publishCount = 0;
+  this->resetMessageBuffers();
+  this->lastConnect = millis();
+  return true;
+}
+
+bool MQTTClass::disconnect() {
+  this->_connected = false;
+  this->_publishCount = 0;
+  this->resetMessageBuffers();
+
+  if(this->_client == nullptr) {
+    this->_clientStarted = false;
+    return true;
+  }
+
+  if(this->_clientStarted) {
+    fanCtrl.unsubscribe();
+    esp_mqtt_client_disconnect(this->_client);
+    esp_mqtt_client_stop(this->_client);
+  }
+
+  esp_mqtt_client_destroy(this->_client);
+  this->_client = nullptr;
+  this->_clientStarted = false;
+  return true;
+}
+
+bool MQTTClass::connected() {
+  return settings.MQTT.enabled && this->_connected;
+}
+
+bool MQTTClass::subscribe(const char *topic) {
+  if(this->_client != nullptr && this->_connected) {
+    char fullTopic[128];
+    if(!this->buildRootTopic(topic, fullTopic, sizeof(fullTopic))) return false;
+    esp_task_wdt_reset();
+    return esp_mqtt_client_subscribe(this->_client, fullTopic, 0) >= 0;
+  }
+  return true;
+}
+
+bool MQTTClass::unsubscribe(const char *topic) {
+  if(this->_client != nullptr && this->_connected) {
+    char fullTopic[128];
+    if(!this->buildRootTopic(topic, fullTopic, sizeof(fullTopic))) return false;
+    return esp_mqtt_client_unsubscribe(this->_client, fullTopic) >= 0;
+  }
+  return true;
+}
+
+bool MQTTClass::publishRaw(const char *topic, const char *payload, uint16_t len, bool retain) {
+  if(this->_client == nullptr || !this->_connected || topic == nullptr) return false;
+  const int result = esp_mqtt_client_publish(this->_client, topic, payload, len, 0, retain ? 1 : 0);
+  if(result < 0) return false;
+  delay(20);
+  return true;
+}
+
+bool MQTTClass::publish(const char *topic, const char *payload, bool retain) {
+  char fullTopic[128];
+  if(!this->buildRootTopic(topic, fullTopic, sizeof(fullTopic))) return false;
+  return this->publishRaw(fullTopic, payload, payload == nullptr ? 0 : strlen(payload), retain);
+}
+
+bool MQTTClass::publish(const char *topic, uint32_t val, bool retain) {
+  snprintf(g_content, sizeof(g_content), "%u", val);
+  return this->publish(topic, g_content, retain);
+}
+
+bool MQTTClass::publish(const char *topic, int8_t val, bool retain) {
+  snprintf(g_content, sizeof(g_content), "%d", val);
+  return this->publish(topic, g_content, retain);
+}
+
+bool MQTTClass::publish(const char *topic, uint8_t val, bool retain) {
+  snprintf(g_content, sizeof(g_content), "%u", val);
+  return this->publish(topic, g_content, retain);
+}
+
+bool MQTTClass::publish(const char *topic, uint16_t val, bool retain) {
+  snprintf(g_content, sizeof(g_content), "%u", val);
+  return this->publish(topic, g_content, retain);
+}
+
+bool MQTTClass::publish(const char *topic, bool val, bool retain) {
+  snprintf(g_content, sizeof(g_content), "%s", val ? "true" : "false");
+  return this->publish(topic, g_content, retain);
+}
+
+bool MQTTClass::publishBuffer(const char *topic, uint8_t *data, uint16_t len, bool retain) {
+  char rawTopic[128];
+  if(!this->buildRawTopic(topic, rawTopic, sizeof(rawTopic))) return false;
+  return this->publishRaw(rawTopic, reinterpret_cast<const char *>(data), len, retain);
+}
+
+bool MQTTClass::publishDisco(const char *topic, JsonObject &obj, bool retain) {
+  serializeJson(obj, g_content, sizeof(g_content));
+  return this->publishBuffer(topic, reinterpret_cast<uint8_t *>(g_content), strlen(g_content), retain);
+}
+
+bool MQTTClass::unpublish(const char *topic) {
+  char fullTopic[128];
+  if(!this->buildRootTopic(topic, fullTopic, sizeof(fullTopic))) return false;
+  return this->publishRaw(fullTopic, "", 0, true);
+}
+
+void MQTTClass::receive(const char *topic, byte *payload, uint32_t length) {
+  esp_task_wdt_reset();
+  if(topic == nullptr || payload == nullptr || length == 0) return;
+
+  const size_t len = strlen(topic);
+  if(len == 0) return;
+
   uint8_t slashes = 0;
-  uint16_t ndx = strlen(topic) - 1;
+  size_t ndx = len - 1;
   while(ndx > 0) {
     if(topic[ndx] == '/') slashes++;
     if(slashes == 4) break;
     ndx--;
   }
-  char entityId[4];
-  char command[32];
-  char entityType[7];
-  char value[10];
-  memset(command, 0x00, sizeof(command));
-  memset(entityId, 0x00, sizeof(entityId));
-  memset(entityType, 0x00, sizeof(entityType));
-  memset(value, 0x00, sizeof(value));
+  if(slashes < 4) return;
+
+  char entityType[8] = {'\0'};
+  char entityId[4] = {'\0'};
+  char command[32] = {'\0'};
+  char value[16] = {'\0'};
+
   uint8_t i = 0;
-  while(topic[ndx] == '/' && ndx < len) ndx++;
-  while(ndx < len) {
-    if(topic[ndx] != '/' && i < sizeof(entityType))
-      entityType[i++] = topic[ndx];
+  while(ndx < len && topic[ndx] == '/') ndx++;
+  while(ndx < len && topic[ndx] != '/') {
+    if(i < sizeof(entityType) - 1) entityType[i++] = topic[ndx];
     ndx++;
-    if(topic[ndx] == '/') break;
   }
-  i = 0;
-  while(topic[ndx] == '/' && ndx < len) ndx++;
-  while(ndx < len) {
-    if(topic[ndx] != '/' && i < sizeof(entityId))
-      entityId[i++] = topic[ndx];
-    ndx++;
-    if(topic[ndx] == '/') break;
-  }
-  i = 0;
-  while(topic[ndx] == '/' && ndx < len) ndx++;
-  while(ndx < len) {
-    if(topic[ndx] != '/' && i < sizeof(command))
-      command[i++] = topic[ndx];
-    ndx++;
-    if(topic[ndx] == '/') break;
-  }
-  for(uint8_t j = 0; j < length && j < sizeof(value); j++)
-    value[j] = payload[j];
-  
-  Serial.print("MQTT type:[");
-  Serial.print(entityType);
-  Serial.print("] command:[");
-  Serial.print(command);
-  Serial.print("] entityId:");
-  Serial.print(entityId);
-  Serial.print(" value:");
-  Serial.println(value);
-  if(strncmp(entityType, "shades", sizeof(entityType)) == 0) {
-    SomfyShade* shade = somfy.getShadeById(atoi(entityId));
-    if (shade) {
-      int val = atoi(value);
-      if(strncmp(command, "target", sizeof(command)) == 0) {
-        if(val >= 0 && val <= 100)
-          shade->moveToTarget(shade->transformPosition(atoi(value)));
-      }
-      if(strncmp(command, "tiltTarget", sizeof(command)) == 0) {
-        if(val >= 0 && val <= 100)
-          shade->moveToTiltTarget(atoi(value));
-      }
-      else if(strncmp(command, "direction", sizeof(command)) == 0) {
-        if(val < 0)
-          shade->sendCommand(somfy_commands::Up);
-        else if(val > 0)
-          shade->sendCommand(somfy_commands::Down);
-        else
-          shade->sendCommand(somfy_commands::My);
-      }
-      else if(strncmp(command, "mypos", sizeof(command)) == 0) {
-        if(val >= 0 && val <= 100)
-          shade->setMyPosition(val);
-      }
-      else if(strncmp(command, "myTiltPos", sizeof(command)) == 0) {
-        if(val >= 0 && val <= 100)
-          shade->setMyPosition(shade->myPos, val);
-      }
-      else if(strncmp(command, "sunFlag", sizeof(command)) == 0) {
-        if(val > 0) shade->sendCommand(somfy_commands::SunFlag);
-        else shade->sendCommand(somfy_commands::Flag);
-      }
-      else if(strncmp(command, "position", sizeof(command)) == 0) {
-        if(val >= 0 && val <= 100) {
-          shade->target = shade->currentPos = shade->transformPosition((float)val);
-          shade->emitState();
-        }
-      }
-      else if(strncmp(command, "tiltPosition", sizeof(command)) == 0) {
-        if(val >= 0 && val <= 100) {
-          shade->tiltTarget = shade->currentTiltPos = (float)val;
-          shade->emitState();
-        }
-      }
-      else if(strncmp(command, "sunny", sizeof(command)) == 0) {
-        if(val >= 0) shade->sendSensorCommand(-1, val, shade->repeats);
-      }
-      else if(strncmp(command, "windy", sizeof(command)) == 0) {
-        if(val >= 0) shade->sendSensorCommand(val, -1, shade->repeats);
-      }
-    }
-  }
-  else if(strncmp(entityType, "fans", sizeof(entityType)) == 0) {
-    uint8_t fanId = atoi(entityId);
-    if(fanCtrl.getFanById(fanId) != nullptr) {
-      uint8_t cmdByte = 255;
-      if(strncmp(command, "fan_command", sizeof(command)) == 0) {
-        if(strncmp(value, "ON", sizeof(value)) == 0 || strncmp(value, "OFF", sizeof(value)) == 0)
-          cmdByte = static_cast<uint8_t>(fan_commands::fan);
-      }
-      else if(strncmp(command, "light_command", sizeof(command)) == 0) {
-        if(strncmp(value, "ON", sizeof(value)) == 0 || strncmp(value, "OFF", sizeof(value)) == 0)
-          cmdByte = static_cast<uint8_t>(fan_commands::light);
-      }
-      else if(strncmp(command, "preset", sizeof(command)) == 0) {
-        if(strncmp(value, "speed1", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed1);
-        else if(strncmp(value, "speed2", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed2);
-        else if(strncmp(value, "speed3", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed3);
-        else if(strncmp(value, "speed4", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed4);
-        else if(strncmp(value, "speed5", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed5);
-        else if(strncmp(value, "speed6", sizeof(value)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed6);
-      }
-      else if(strncmp(command, "button_", 7) == 0) {
-        char *buttonCommand = strchr(command, '_');
-        if(buttonCommand != nullptr && strncmp(value, "PRESS", sizeof(value)) == 0) {
-          buttonCommand++;
-          if(strncmp(buttonCommand, "color", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::color);
-          else if(strncmp(buttonCommand, "mute", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::mute);
-          else if(strncmp(buttonCommand, "invert", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::invert);
-          else if(strncmp(buttonCommand, "cooldown1h", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::cooldown1h);
-          else if(strncmp(buttonCommand, "cooldown2h", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::cooldown2h);
-          else if(strncmp(buttonCommand, "cooldown4h", sizeof(command)) == 0) cmdByte = static_cast<uint8_t>(fan_commands::cooldown4h);
-        }
-      }
-      if(cmdByte != 255) fanCtrl.sendCommand(fanId, static_cast<fan_commands>(cmdByte));
-    }
-  }
-  else if(strncmp(entityType, "groups", sizeof(entityType)) == 0) {
-    SomfyGroup* group = somfy.getGroupById(atoi(entityId));
-    if (group) {
-      int val = atoi(value);
-      if(strncmp(command, "direction", sizeof(command)) == 0) {
-        if(val < 0)
-          group->sendCommand(somfy_commands::Up);
-        else if(val > 0)
-          group->sendCommand(somfy_commands::Down);
-        else
-          group->sendCommand(somfy_commands::My);
-      }
-      else if(strncmp(command, "sunFlag", sizeof(command)) == 0) {
-        if(val > 0)
-          group->sendCommand(somfy_commands::Flag);
-        else
-          group->sendCommand(somfy_commands::SunFlag);
-      }
-      else if(strncmp(command, "sunny", sizeof(command)) == 0) {
-        if(val >= 0) group->sendSensorCommand(-1, val, group->repeats);
-      }
-      else if(strncmp(command, "windy", sizeof(command)) == 0) {
-        if(val >= 0) group->sendSensorCommand(val, -1, group->repeats);
-      }
-    }
-  }
-  esp_task_wdt_reset(); // Make sure we do not reboot here.
-}
-bool MQTTClass::connect() {
-  esp_task_wdt_reset(); // Make sure we do not reboot here.
-  if(mqttClient.connected()) {
-    if(!settings.MQTT.enabled || this->suspended)
-      return this->disconnect();
-    else
-      return true;
-  }
-  if(settings.MQTT.enabled && !this->suspended) {
-    if(this->lastConnect + 10000 > millis()) return false;    
-    uint64_t mac = ESP.getEfuseMac();
-    snprintf(this->clientId, sizeof(this->clientId), "client-%08x%08x", (uint32_t)((mac >> 32) & 0xFFFFFFFF), (uint32_t)(mac & 0xFFFFFFFF));
-    if(strlen(settings.MQTT.protocol) > 0 && strlen(settings.MQTT.hostname) > 0) {
-      mqttClient.setServer(settings.MQTT.hostname, settings.MQTT.port);
-      char lwtTopic[128] = "status";
-      if(strlen(settings.MQTT.rootTopic) > 0)
-        snprintf(lwtTopic, sizeof(lwtTopic), "%s/status", settings.MQTT.rootTopic);
-      esp_task_wdt_reset();
-      if(mqttClient.connect(this->clientId, settings.MQTT.username, settings.MQTT.password, lwtTopic, 0, true, "offline")) {
-        Serial.print("Successfully connected MQTT client ");
-        Serial.println(this->clientId);
-        this->publish("status", "online", true);
-        this->publish("ipAddress", settings.IP.ip.toString().c_str(), true);
-        this->publish("host", settings.hostname, true);
-        this->publish("firmware", settings.fwVersion.name, true);
-        this->publish("serverId", settings.serverId, true);
-        this->publish("mac", net.mac.c_str());
-        somfy.publish();
-        this->subscribe("shades/+/target/set");
-        this->subscribe("shades/+/tiltTarget/set");
-        this->subscribe("shades/+/direction/set");
-        this->subscribe("shades/+/mypos/set");
-        this->subscribe("shades/+/myTiltPos/set");
-        this->subscribe("shades/+/sunFlag/set");
-        this->subscribe("shades/+/sunny/set");
-        this->subscribe("shades/+/windy/set");
-        this->subscribe("shades/+/position/set");
-        this->subscribe("shades/+/tiltPosition/set");
-        this->subscribe("groups/+/direction/set");
-        this->subscribe("groups/+/sunFlag/set");
-        this->subscribe("groups/+/sunny/set");
-        this->subscribe("groups/+/windy/set");
-        fanCtrl.publish();
-        this->subscribe("fans/+/fan_command/set");
-        this->subscribe("fans/+/light_command/set");
-        this->subscribe("fans/+/preset/set");
-        this->subscribe("fans/+/button_+/set");
-        mqttClient.setCallback(MQTTClass::receive);
-        Serial.println("MQTT Startup Completed");
-        esp_task_wdt_reset();
-        this->lastConnect = millis();
-        return true;
-      }
-      else {
-        Serial.print("MQTT Connection failed for: ");
-        Serial.println(mqttClient.state());
-        this->lastConnect = millis();
-        return false;
-      }
-    }
-    else
-      return true;
-  }
-  return true;
-}
-bool MQTTClass::disconnect() {
-  if(mqttClient.connected()) {
-    this->unsubscribe("shades/+/target/set");
-    this->unsubscribe("shades/+/direction/set");
-    this->unsubscribe("shades/+/tiltTarget/set");
-    this->unsubscribe("shades/+/mypos/set");
-    this->unsubscribe("shades/+/myTiltPos/set");
-    this->unsubscribe("shades/+/sunFlag/set");
-    this->unsubscribe("groups/+/direction/set");
-    this->unsubscribe("shades/+/sunny/set");
-    this->unsubscribe("shades/+/windy/set");
-    this->unsubscribe("shades/+/position/set");
-    this->unsubscribe("shades/+/tiltPosition/set");
-    this->unsubscribe("fans/+/fan_command/set");
-    this->unsubscribe("fans/+/light_command/set");
-    this->unsubscribe("fans/+/preset/set");
-    this->unsubscribe("fans/+/button_+/set");
-    this->unsubscribe("groups/+/direction/set");
-    this->unsubscribe("groups/+/sunFlag/set");
-    this->unsubscribe("groups/+/sunny/set");
-    this->unsubscribe("groups/+/windy/set");
-    mqttClient.disconnect();
-  }
-  return true;
-}
-bool MQTTClass::unsubscribe(const char *topic) {
-  if(mqttClient.connected()) {
-    char top[128];
-    if(strlen(settings.MQTT.rootTopic) > 0)
-      snprintf(top, sizeof(top), "%s/%s", settings.MQTT.rootTopic, topic);
-    else
-      strlcpy(top, topic, sizeof(top));
-    Serial.print("MQTT Unsubscribed from:");
-    Serial.println(top);
-    return mqttClient.unsubscribe(top);
-  }
-  return true;
-}
-bool MQTTClass::subscribe(const char *topic) {
-  if(mqttClient.connected()) {
-    esp_task_wdt_reset(); // Make sure we do not reboot here.
-    char top[128];
-    if(strlen(settings.MQTT.rootTopic) > 0)
-      snprintf(top, sizeof(top), "%s/%s", settings.MQTT.rootTopic, topic);
-    else
-      strlcpy(top, topic, sizeof(top));
-    Serial.print("MQTT Subscribed to:");
-    Serial.println(top);
-    return mqttClient.subscribe(top);
-  }
-  return true;
-}
-bool MQTTClass::publish(const char *topic, const char *payload, bool retain) {
-  if(mqttClient.connected()) {
-    char top[128];
-    if(strlen(settings.MQTT.rootTopic) > 0)
-      snprintf(top, sizeof(top), "%s/%s", settings.MQTT.rootTopic, topic);
-    else
-      strlcpy(top, topic, sizeof(top));
-    esp_task_wdt_reset(); // Make sure we do not reboot here.
-    mqttClient.publish(top, payload, retain);
-    return true;
-  }
-  return false;
-}
-bool MQTTClass::publish(const char *topic, uint32_t val, bool retain) {
-  snprintf(g_content, sizeof(g_content), "%u", val);
-  return this->publish(topic, g_content, retain);
-}
-bool MQTTClass::unpublish(const char *topic) {
-  if(mqttClient.connected()) {
-    char top[128];
-    if(strlen(settings.MQTT.rootTopic) > 0)
-      snprintf(top, sizeof(top), "%s/%s", settings.MQTT.rootTopic, topic);
-    else
-      strlcpy(top, topic, sizeof(top));
-    esp_task_wdt_reset(); // Make sure we do not reboot here.
-    mqttClient.publish(top, (const uint8_t *)"", 0, true);
-    return true;
-  }
-  return false;
 
-//  mqttClient.beginPublish(topic, 0, true);
-//  mqttClient.endPublish();
+  i = 0;
+  while(ndx < len && topic[ndx] == '/') ndx++;
+  while(ndx < len && topic[ndx] != '/') {
+    if(i < sizeof(entityId) - 1) entityId[i++] = topic[ndx];
+    ndx++;
+  }
+
+  i = 0;
+  while(ndx < len && topic[ndx] == '/') ndx++;
+  while(ndx < len && topic[ndx] != '/') {
+    if(i < sizeof(command) - 1) command[i++] = topic[ndx];
+    ndx++;
+  }
+
+  const uint32_t copyLen = length < sizeof(value) - 1 ? length : sizeof(value) - 1;
+  memcpy(value, payload, copyLen);
+  value[copyLen] = '\0';
+
+  if(strcmp(entityType, "fans") != 0) return;
+
+  const uint8_t fanId = atoi(entityId);
+  if(fanCtrl.getFanById(fanId) == nullptr) return;
+
+  uint8_t cmdByte = 255;
+  if(strcmp(command, "fan_command") == 0) {
+    if(strcmp(value, "ON") == 0 || strcmp(value, "OFF") == 0) cmdByte = static_cast<uint8_t>(fan_commands::fan);
+  }
+  else if(strcmp(command, "light_command") == 0) {
+    if(strcmp(value, "ON") == 0 || strcmp(value, "OFF") == 0) cmdByte = static_cast<uint8_t>(fan_commands::light);
+  }
+  else if(strcmp(command, "preset") == 0) {
+    if(strcmp(value, "speed1") == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed1);
+    else if(strcmp(value, "speed2") == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed2);
+    else if(strcmp(value, "speed3") == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed3);
+    else if(strcmp(value, "speed4") == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed4);
+    else if(strcmp(value, "speed5") == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed5);
+    else if(strcmp(value, "speed6") == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed6);
+  }
+  else if(strncmp(command, "button_", 7) == 0 && strcmp(value, "PRESS") == 0) {
+    const char *buttonCommand = command + 7;
+    if(strcmp(buttonCommand, "color") == 0) cmdByte = static_cast<uint8_t>(fan_commands::color);
+    else if(strcmp(buttonCommand, "mute") == 0) cmdByte = static_cast<uint8_t>(fan_commands::mute);
+    else if(strcmp(buttonCommand, "invert") == 0) cmdByte = static_cast<uint8_t>(fan_commands::invert);
+    else if(strcmp(buttonCommand, "cooldown1h") == 0) cmdByte = static_cast<uint8_t>(fan_commands::cooldown1h);
+    else if(strcmp(buttonCommand, "cooldown2h") == 0) cmdByte = static_cast<uint8_t>(fan_commands::cooldown2h);
+    else if(strcmp(buttonCommand, "cooldown4h") == 0) cmdByte = static_cast<uint8_t>(fan_commands::cooldown4h);
+  }
+
+  if(cmdByte != 255) fanCtrl.sendCommand(fanId, static_cast<fan_commands>(cmdByte));
+  esp_task_wdt_reset();
 }
 
-bool MQTTClass::publishBuffer(const char *topic, uint8_t *data, uint16_t len, bool retain) {
-  size_t res;
-  uint16_t offset = 0;
-  uint16_t to_write = len;
-  uint16_t buff_len;
-  esp_task_wdt_reset(); // Make sure we do not reboot here.
-  mqttClient.beginPublish(topic, len, retain);
-  do { 
-    buff_len = to_write;
-    if(buff_len > 128) buff_len = 128;
-    res = mqttClient.write(data+offset, buff_len);
-    offset += buff_len;
-    to_write -= buff_len;
-  } while(res == buff_len && to_write > 0);
-  mqttClient.endPublish();
-  return true;
+void MQTTClass::onConnected() {
+  this->_connected = true;
+  this->_publishCount = 0;
+  this->lastConnect = millis();
+
+  // Always publish status and subscribe on (re)connect
+  this->publish("status", "online", true);
+  this->publish("ipAddress", settings.IP.ip.toString().c_str(), true);
+  this->publish("host", settings.hostname, true);
+  this->publish("firmware", settings.fwVersion.name, true);
+  this->publish("serverId", settings.serverId, true);
+  this->publish("mac", net.mac.c_str(), true);
+
+  if(!this->_discoPublished) {
+    // First connect: publish fan state + HA discovery (retained, only needed once per boot)
+    fanCtrl.publish();
+    this->_discoPublished = true;
+  }
+
+  fanCtrl.subscribe();
 }
-bool MQTTClass::publishDisco(const char *topic, JsonObject &obj, bool retain) {
-  serializeJson(obj, g_content, sizeof(g_content));
-  this->publishBuffer(topic, (uint8_t *)g_content, strlen(g_content), retain);
-  return true;
+
+void MQTTClass::onDisconnected() {
+  this->_connected = false;
+  this->resetMessageBuffers();
 }
-bool MQTTClass::publish(const char *topic, int8_t val, bool retain) {
-  snprintf(g_content, sizeof(g_content), "%d", val);
-  return this->publish(topic, g_content, retain);
+
+void MQTTClass::onData(esp_mqtt_event_handle_t event) {
+  if(event == nullptr || event->topic == nullptr || event->data == nullptr || event->topic_len <= 0 || event->data_len < 0) return;
+
+  if(event->current_data_offset == 0) {
+    const size_t topicLen = event->topic_len < static_cast<int>(sizeof(this->_messageTopic) - 1) ? static_cast<size_t>(event->topic_len) : sizeof(this->_messageTopic) - 1;
+    memcpy(this->_messageTopic, event->topic, topicLen);
+    this->_messageTopic[topicLen] = '\0';
+    this->_messagePayload[0] = '\0';
+  }
+
+  const size_t offset = event->current_data_offset < static_cast<int>(sizeof(this->_messagePayload) - 1) ? static_cast<size_t>(event->current_data_offset) : sizeof(this->_messagePayload) - 1;
+  const size_t available = sizeof(this->_messagePayload) - 1 - offset;
+  const size_t copyLen = event->data_len < static_cast<int>(available) ? static_cast<size_t>(event->data_len) : available;
+  memcpy(this->_messagePayload + offset, event->data, copyLen);
+  this->_messagePayload[offset + copyLen] = '\0';
+
+  if(event->current_data_offset + event->data_len >= event->total_data_len) {
+    MQTTClass::receive(this->_messageTopic, reinterpret_cast<byte *>(this->_messagePayload), strlen(this->_messagePayload));
+    this->resetMessageBuffers();
+  }
 }
-bool MQTTClass::publish(const char *topic, uint8_t val, bool retain) {
-  snprintf(g_content, sizeof(g_content), "%u", val);
-  return this->publish(topic, g_content, retain);
-}
-bool MQTTClass::publish(const char *topic, uint16_t val, bool retain) {
-  snprintf(g_content, sizeof(g_content), "%u", val);
-  return this->publish(topic, g_content, retain);
-}
-bool MQTTClass::publish(const char *topic, bool val, bool retain) {
-  snprintf(g_content, sizeof(g_content), "%s", val ? "true" : "false");
-  return this->publish(topic, g_content, retain);
-}
-bool MQTTClass::connected() {
-  if(settings.MQTT.enabled) return mqttClient.connected();
-  return false;
+
+void MQTTClass::mqttEventHandler(void *handlerArgs, esp_event_base_t base, int32_t eventId, void *eventData) {
+  (void)base;
+  MQTTClass *instance = static_cast<MQTTClass *>(handlerArgs);
+  if(instance == nullptr && eventData != nullptr) {
+    esp_mqtt_event_handle_t event = static_cast<esp_mqtt_event_handle_t>(eventData);
+    instance = static_cast<MQTTClass *>(event->user_context);
+  }
+  if(instance == nullptr) return;
+
+  switch(static_cast<esp_mqtt_event_id_t>(eventId)) {
+    case MQTT_EVENT_CONNECTED:
+      instance->onConnected();
+      break;
+    case MQTT_EVENT_DISCONNECTED:
+      instance->onDisconnected();
+      break;
+    case MQTT_EVENT_DATA:
+      instance->onData(static_cast<esp_mqtt_event_handle_t>(eventData));
+      break;
+    default:
+      break;
+  }
 }

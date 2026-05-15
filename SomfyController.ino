@@ -59,11 +59,11 @@ void loop() {
   uint32_t timing = millis();
   
   net.loop();
-  if(millis() - timing > 100) Serial.printf("Timing Net: %ldms\n", millis() - timing);
+  if(millis() - timing > 100) {} // Serial.printf("Timing Net: %ldms\n", millis() - timing);
   timing = millis();
   esp_task_wdt_reset();
   somfy.loop();
-  if(millis() - timing > 100) Serial.printf("Timing Somfy: %ldms\n", millis() - timing);
+  if(millis() - timing > 100) {} // Serial.printf("Timing Somfy: %ldms\n", millis() - timing);
   timing = millis();
   esp_task_wdt_reset();
   if(net.connected() || net.softAPOpened) {
@@ -73,11 +73,11 @@ void loop() {
     }
     webServer.loop();
     esp_task_wdt_reset();
-    if(millis() - timing > 100) Serial.printf("Timing WebServer: %ldms\n", millis() - timing);
+    if(millis() - timing > 100) {} // Serial.printf("Timing WebServer: %ldms\n", millis() - timing);
     esp_task_wdt_reset();
     timing = millis();
     sockEmit.loop();
-    if(millis() - timing > 100) Serial.printf("Timing Socket: %ldms\n", millis() - timing);
+    if(millis() - timing > 100) {} // Serial.printf("Timing Socket: %ldms\n", millis() - timing);
     esp_task_wdt_reset();
     timing = millis();
   }
