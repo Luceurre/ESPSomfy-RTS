@@ -350,14 +350,12 @@ void MQTTClass::receive(const char *topic, byte *payload, uint32_t length) {
     else if(strcmp(value, "speed6") == 0) cmdByte = static_cast<uint8_t>(fan_commands::speed6);
   }
   else if(strcmp(command, "color") == 0) {
-    if(strcmp(value, "white") == 0) {
-      if(fan->lightColor == 0) return;
-      cmdByte = static_cast<uint8_t>(fan_commands::color);
-    }
-    else if(strcmp(value, "yellow") == 0) {
-      if(fan->lightColor == 1) return;
-      cmdByte = static_cast<uint8_t>(fan_commands::color);
-    }
+    uint8_t targetColor = 255;
+    if(strcmp(value, "cold") == 0) targetColor = 0;
+    else if(strcmp(value, "white") == 0) targetColor = 1;
+    else if(strcmp(value, "warm") == 0) targetColor = 2;
+    if(targetColor < 3) fanCtrl.sendColorCycle(fanId, targetColor);
+    return;
   }
   else if(strcmp(command, "direction") == 0) {
     if(strcmp(value, "counter_clockwise") == 0) {

@@ -91,6 +91,7 @@ class FanController {
     bool begin();
     void loop();
     bool sendCommand(uint8_t fanId, fan_commands cmd);
+    void sendColorCycle(uint8_t fanId, uint8_t targetColor);
     void applyState(uint8_t fanId, JsonObject &obj);
     fan_device_t *addFan();
     bool deleteFan(uint8_t fanId);
@@ -251,7 +252,7 @@ inline bool FanController::sendCommand(uint8_t fanId, fan_commands cmd) {
       fan->lightOn = !fan->lightOn;
       break;
     case fan_commands::color:
-      fan->lightColor = (fan->lightColor == 0) ? 1 : 0;
+      fan->lightColor = (fan->lightColor + 1) % 3;
       fan->lightOn = true;
       break;
     case fan_commands::invert:
@@ -300,6 +301,21 @@ inline bool FanController::sendCommand(uint8_t fanId, fan_commands cmd) {
   this->saveFans();
   this->publishState(fanId);
   return true;
+}
+#define FAN_COLOR_CYCLE_DELAY_MS 300
+inline void FanController::sendColorCycle(uint8_t fanId, uint8_t targetColor) {
+  fan_device_t *fan = this->getFanById(fanId);
+  if(fan == nullptr || !this->transceiver.config.enabled) return;
+  if(fan->lightColor == targetColor) return;
+  const uint8_t steps = (targetColor - fan->lightColor + 3) % 3;
+  for(uint8_t i = 0; i < steps; i++) {
+    this->sendFanFrame(this->buildCode(*fan, fan_commands::color));
+    fan->lightColor = (fan->lightColor + 1) % 3;
+    fan->lightOn = true;
+    if(i < steps - 1) delay(FAN_COLOR_CYCLE_DELAY_MS);
+  }
+  this->saveFans();
+  this->publishState(fanId);
 }
 inline void FanController::applyState(uint8_t fanId, JsonObject &obj) {
   fan_device_t *fan = this->getFanById(fanId);
@@ -534,8 +550,9 @@ inline void FanController::publishDisco() {
     obj["command_topic"] = "~/color/set";
     obj["state_topic"] = "~/color_state";
     JsonArray colorOptions = obj.createNestedArray("options");
+    colorOptions.add("cold");
     colorOptions.add("white");
-    colorOptions.add("yellow");
+    colorOptions.add("warm");
     obj["enabled_by_default"] = true;
     snprintf(topic, sizeof(topic), "%s/select/%d_color/config", settings.MQTT.discoTopic, fan.fanId);
     mqtt.publishDisco(topic, obj, true);
@@ -724,7 +741,8 @@ inline void FanController::publishState(uint8_t fanId) {
     mqtt.publish(topic, "", true);
   }
   snprintf(topic, sizeof(topic), "fans/%d/color_state", fanId);
-  mqtt.publish(topic, fan->lightColor == 0 ? "white" : "yellow", true);
+  const char *fanColors[] = {"cold", "white", "warm"};
+  mqtt.publish(topic, fan->lightColor < 3 ? fanColors[fan->lightColor] : "white", true);
   snprintf(topic, sizeof(topic), "fans/%d/direction_state", fanId);
   mqtt.publish(topic, fan->inverted ? "counter_clockwise" : "clockwise", true);
   snprintf(topic, sizeof(topic), "fans/%d/mute_state", fanId);
