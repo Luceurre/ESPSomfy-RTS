@@ -8,6 +8,7 @@
 #include "Utils.h"
 #include "Somfy.h"
 #include "Fan.h"
+#include "Dooya.h"
 #include "MQTT.h"
 #include "GitOTA.h"
 
@@ -18,6 +19,7 @@ Network net;
 rebootDelay_t rebootDelay;
 SomfyShadeController somfy;
 FanController fanCtrl(somfy.transceiver);
+DooyaController dooyaCtrl(somfy.transceiver);
 MQTTClass mqtt;
 GitUpdater git;
 
@@ -39,6 +41,7 @@ void setup() {
   net.setup();  
   somfy.begin();
   fanCtrl.begin();
+  dooyaCtrl.begin();
   //git.checkForUpdate();
   esp_task_wdt_init(7, true); //enable panic so ESP32 restarts
   esp_task_wdt_add(NULL); //add current thread to WDT watch
@@ -64,6 +67,10 @@ void loop() {
   esp_task_wdt_reset();
   somfy.loop();
   if(millis() - timing > 100) {} // Serial.printf("Timing Somfy: %ldms\n", millis() - timing);
+  timing = millis();
+  esp_task_wdt_reset();
+  dooyaCtrl.loop();
+  if(millis() - timing > 100) {} // Serial.printf("Timing Dooya: %ldms\n", millis() - timing);
   timing = millis();
   esp_task_wdt_reset();
   if(net.connected() || net.softAPOpened) {
