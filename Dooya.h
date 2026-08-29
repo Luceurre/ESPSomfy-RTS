@@ -35,8 +35,9 @@ class Transceiver {
 #define DOOYA_FREQUENCY 433.92f
 
 // Final byte of the 40-bit frame: button nibble (high) | check nibble (low).
-// Values captured from the remote; check nibble is a fixed per-button mapping
-// (this remote generation uses 14/12/5, not the button-echo variant).
+// Values captured from the remote; the check nibble is a fixed per-button
+// mapping (this remote generation uses check nibbles 14/12/5 for up/down/stop,
+// not the button-echo variant seen on other Dooya remotes).
 enum class dooya_commands : byte {
   up   = 0x1E,  // button 1, check E
   stop = 0x55,  // button 5, check 5
@@ -78,7 +79,6 @@ class DooyaController {
     uint8_t currentPosition(dooya_device_t &awning);
     void stopTravel(dooya_device_t &awning, bool sendFrame);
   public:
-    static constexpr float DOOYA_FREQ = DOOYA_FREQUENCY;
     dooya_device_t awnings[MAX_AWNINGS];
 
     DooyaController(Transceiver &radio);
@@ -94,7 +94,8 @@ class DooyaController {
     bool loadAwnings();
 #ifdef ARDUINO
     void publishDisco();
-    void unpublishDisco();
+    void unpublishDisco(uint8_t awningId);
+    void unpublishAllDisco();
     void publish();
     void publishState(uint8_t awningId);
     void subscribe();
@@ -137,7 +138,10 @@ inline bool dooya_device_t::fromJSON(JsonObject &obj) {
   }
   if(obj.containsKey("channel")) this->channel = obj["channel"].as<uint8_t>();
   if(obj.containsKey("travelTime")) this->travelTime = obj["travelTime"].as<uint16_t>();
-  if(obj.containsKey("position")) this->position = obj["position"].as<uint8_t>() > 100 ? 100 : obj["position"].as<uint8_t>();
+  if(obj.containsKey("position")) {
+    uint8_t pos = obj["position"].as<uint8_t>();
+    this->position = pos > 100 ? 100 : pos;
+  }
   return true;
 }
 inline void dooya_device_t::toJSON(JsonResponse &json) {
@@ -201,7 +205,7 @@ inline DooyaController::DooyaController(Transceiver &radio): transceiver(radio) 
 inline bool DooyaController::begin() { return this->loadAwnings(); }
 inline uint8_t DooyaController::currentPosition(dooya_device_t &awning) {
   if(awning.state == dooya_state::stopped) return awning.position;
-  const uint16_t travelMs = (uint16_t)awning.travelTime * 1000;
+  const uint32_t travelMs = (uint32_t)awning.travelTime * 1000UL;
   if(travelMs == 0) return awning.position;
   uint32_t elapsed = millis() - awning.travelStart;
   if(elapsed > travelMs) elapsed = travelMs;
@@ -434,7 +438,13 @@ inline void DooyaController::publishDisco() {
     mqtt.publishDisco(topic, obj, true);
   }
 }
-inline void DooyaController::unpublishDisco() {
+inline void DooyaController::unpublishDisco(uint8_t awningId) {
+  if(!mqtt.connected() || !settings.MQTT.pubDisco) return;
+  char topic[128] = "";
+  snprintf(topic, sizeof(topic), "%s/cover/%d/config", settings.MQTT.discoTopic, awningId);
+  mqtt.unpublish(topic);
+}
+inline void DooyaController::unpublishAllDisco() {
   if(!mqtt.connected() || !settings.MQTT.pubDisco) return;
   char topic[128] = "";
   for(uint8_t i = 0; i < MAX_AWNINGS; i++) {

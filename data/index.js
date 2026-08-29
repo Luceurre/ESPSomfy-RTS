@@ -3300,6 +3300,7 @@ class Somfy {
             this.showEditGroup(false);
             this.showEditShade(false);
             this.showEditFan(false);
+            this.showEditAwning(false);
         }
     }
     showEditShade(bShow) {
@@ -3319,6 +3320,7 @@ class Somfy {
             this.showEditGroup(false);
             this.showEditRoom(false);
             this.showEditFan(false);
+            this.showEditAwning(false);
         }
     }
     showEditGroup(bShow) {
@@ -3337,7 +3339,8 @@ class Somfy {
         if (bShow) {
             this.showEditRoom(false);
             this.showEditShade(false);
-            this.showEditFan(false);
+            this.showEditGroup(false);
+            this.showEditAwning(false);
         }
 
     }
@@ -3364,8 +3367,9 @@ class Somfy {
     openEditAwning(awningId) {
         let elAwning = document.getElementById('somfyAwning');
         if (typeof awningId === 'undefined' || awningId === null) {
+            let maxAwnings = parseInt(document.getElementById('spanMaxAwnings').innerText, 10) || 8;
             let nextId = 1;
-            for (let id = 1; id <= 8; id++) {
+            for (let id = 1; id <= maxAwnings; id++) {
                 if (!(this._awnings || []).some(a => a.awningId === id)) { nextId = id; break; }
             }
             document.getElementById('btnSaveAwning').innerText = 'Add Awning';
@@ -3637,7 +3641,7 @@ class Somfy {
             valid = false;
         }
         if (valid) {
-            let obj = { awningId: awningId, name: name, remoteId: remoteId, channel: isNaN(channel) ? 0x61 : channel, travelTime: travelTime, roomId: roomId };
+            let obj = { awningId: awningId, name: name, remoteId: remoteId, channel: channel, travelTime: travelTime, roomId: roomId };
             if (isNew) {
                 putJSONSync('/addAwning', obj, (err, awning) => {
                     if (err) ui.serviceError(err);
@@ -4203,6 +4207,10 @@ class Somfy {
     }
     sendAwningCommand(awningId, command, cb) {
         putJSON('/awningCommand', { awningId: awningId, command: command }, (err, awning) => {
+            if (!err && awning && typeof awning.position !== 'undefined') {
+                let el = document.querySelector(`.awning-pos[data-awningid="${awningId}"]`);
+                if (el) el.innerText = `${awning.position}%`;
+            }
             if (typeof cb === 'function') cb(err, awning);
         });
     }

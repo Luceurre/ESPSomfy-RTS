@@ -1920,8 +1920,10 @@ void Web::begin() {
     dooya_device_t *awning = dooyaCtrl.getAwningById(awningId);
     if(!awning) server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Awning not found.\"}"));
     else {
+      // Unpublish only the deleted entity before clearing the slot;
+      // unpublishing all remaining awnings would blank their HA discovery.
+      dooyaCtrl.unpublishDisco(awningId);
       dooyaCtrl.deleteAwning(awningId);
-      dooyaCtrl.unpublishDisco();
       server.send(200, _encoding_json, F("{\"status\":\"SUCCESS\",\"desc\":\"Awning deleted.\"}"));
     }
   });

@@ -8,8 +8,8 @@ open/close/stop commands and travel-time-based position estimation.
 
 The DOOYA protocol is fully reverse-engineered and publicly documented (rtl_433,
 Flipper Zero firmware, ESPHome `remote_base`). Our own captures from the DC90
-remote are archived in `../dooya_captures/` with the decoder script
-`../dooya_decode.py`.
+remote and the BinRAW decoder script live in the enclosing workspace
+(`dooya_captures/`, `dooya_decode.py`), outside this repository.
 
 - **Carrier**: 433.92 MHz, ASK/OOK (same as the Create Ikohs fans)
 - **Frame**: 40 bits, static code (no rolling counter)
@@ -17,7 +17,9 @@ remote are archived in `../dooya_captures/` with the decoder script
   - 8-bit channel (our remote: `0x61`)
   - 4-bit button (1 = up, 3 = down, 5 = stop)
   - 4-bit check — fixed per-button mapping; this remote generation uses
-    14/12/5, not the button-echo variant seen on other Dooya remotes
+    check nibbles 14/12/5 (up/stop/down), not the button-echo variant seen on
+    other Dooya remotes. The full command byte (button<<4 | check) is what is
+    hard-coded in `dooya_commands`.
 - **Timing** (captured, TE = 335 µs):
   - Sync: 14 TE high (~4.7 ms) + 5 TE low (~1.7 ms)
   - Bit 1: 2 TE on / 1 TE off; bit 0: 1 TE on / 2 TE off
@@ -51,7 +53,8 @@ Mirrors the Create Ikohs fan integration (`Fan.h`):
 - **`Web.cpp`/`Web.h`** — REST endpoints (see below)
 - **`data/index.html` + `data/index.js`** — "Awnings" settings subtab (editor
   with name, remote ID hex, channel hex, travel time, room) and home-screen
-  card with ▲/■/▼ buttons and live position
+  card with ▲/■/▼ buttons and a position display (updated after each command;
+  MQTT consumers get ~1 s refresh during travel)
 
 ## Adding an awning
 
@@ -95,8 +98,9 @@ Under the configured root topic:
   feedback from the motor. If the awning is moved by the original remote the
   estimate drifts. Stop+reopen recalibrates only insofar as travel continues
   from the last estimate.
-- The check nibble is per-remote-generation. The captured mapping (14/12/5) is
-  hard-coded in `dooya_commands`; a remote using the button-echo variant
-  (1/1, 3/3, 5/5) would need its own mapping.
+- The check nibble is per-remote-generation. The captured mapping (check
+  nibbles 14/12/5) is hard-coded as full command bytes `0x1E`/`0x55`/`0x3C` in
+  `dooya_commands`; a remote using the button-echo variant (1/1, 3/3, 5/5)
+  would need its own mapping.
 - Single channel byte per awning device; multi-channel remotes need one
   awning entry per channel.
