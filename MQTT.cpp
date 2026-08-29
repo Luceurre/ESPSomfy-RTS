@@ -5,6 +5,7 @@
 #include "ConfigSettings.h"
 #include "MQTT.h"
 #include "Fan.h"
+#include "Dooya.h"
 #include "Network.h"
 #include "Utils.h"
 
@@ -14,6 +15,7 @@ static char g_content[MQTT_MAX_RESPONSE];
 
 extern ConfigSettings settings;
 extern FanController fanCtrl;
+extern DooyaController dooyaCtrl;
 extern Network net;
 extern rebootDelay_t rebootDelay;
 
@@ -168,6 +170,7 @@ bool MQTTClass::disconnect() {
 
   if(this->_clientStarted) {
     fanCtrl.unsubscribe();
+    dooyaCtrl.unsubscribe();
     esp_mqtt_client_disconnect(this->_client);
     esp_mqtt_client_stop(this->_client);
   }
@@ -303,6 +306,11 @@ void MQTTClass::receive(const char *topic, byte *payload, uint32_t length) {
   memcpy(value, payload, copyLen);
   value[copyLen] = '\0';
 
+  if(strcmp(entityType, "awnings") == 0) {
+    dooyaCtrl.onMqttCommand(entityId, command, value);
+    return;
+  }
+
   if(strcmp(entityType, "fans") != 0) return;
 
   const uint8_t fanId = atoi(entityId);
@@ -405,12 +413,14 @@ void MQTTClass::onConnected() {
   this->publish("mac", net.mac.c_str(), true);
 
   if(!this->_discoPublished) {
-    // First connect: publish fan state + HA discovery (retained, only needed once per boot)
+    // First connect: publish fan/awning state + HA discovery (retained, only needed once per boot)
     fanCtrl.publish();
+    dooyaCtrl.publish();
     this->_discoPublished = true;
   }
 
   fanCtrl.subscribe();
+  dooyaCtrl.subscribe();
 }
 
 void MQTTClass::onDisconnected() {
