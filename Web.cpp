@@ -15,6 +15,7 @@
 #include "GitOTA.h"
 #include "Network.h"
 #include "Fan.h"
+#include "Dooya.h"
 
 extern ConfigSettings settings;
 extern SSDPClass SSDP;
@@ -25,6 +26,7 @@ extern MQTTClass mqtt;
 extern GitUpdater git;
 extern Network net;
 extern FanController fanCtrl;
+extern DooyaController dooyaCtrl;
 
 //#define WEB_MAX_RESPONSE 34768
 #define WEB_MAX_RESPONSE 4096
@@ -266,6 +268,10 @@ void Web::handleController(WebServer &server) {
     resp.addElem("maxFans", (uint8_t)MAX_FANS);
     resp.beginArray("fans");
     fanCtrl.toJSONFans(resp);
+    resp.endArray();
+    resp.addElem("maxAwnings", (uint8_t)MAX_AWNINGS);
+    resp.beginArray("awnings");
+    dooyaCtrl.toJSONAwnings(resp);
     resp.endArray();
     resp.beginArray("repeaters");
     somfy.toJSONRepeaters(resp);
@@ -831,6 +837,9 @@ void Web::handleDiscovery(WebServer &server) {
     resp.beginArray("fans");
     fanCtrl.toJSONFans(resp);
     resp.endArray();
+    resp.beginArray("awnings");
+    dooyaCtrl.toJSONAwnings(resp);
+    resp.endArray();
     resp.endObject();
     resp.endResponse();
     net.needsBroadcast = true;
@@ -1208,6 +1217,145 @@ void Web::handleFanCommand(WebServer &server) {
   else
     server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Invalid Http method\"}"));
 }
+static bool parseAwningCommand(const String &val, dooya_commands &cmd) {
+  if (val.length() == 0) return false;
+  if (val.equalsIgnoreCase("up") || val.equalsIgnoreCase("open"))    { cmd = dooya_commands::up; return true; }
+  if (val.equalsIgnoreCase("down") || val.equalsIgnoreCase("close"))  { cmd = dooya_commands::down; return true; }
+  if (val.equalsIgnoreCase("stop"))                                     { cmd = dooya_commands::stop; return true; }
+  return false;
+}
+
+void Web::handleGetAwnings(WebServer &server) {
+  webServer.sendCORSHeaders(server);
+  if(server.method() == HTTP_OPTIONS) { server.send(200, "OK"); return; }
+  HTTPMethod method = server.method();
+  if (method == HTTP_POST || method == HTTP_GET) {
+    JsonResponse resp;
+    resp.beginResponse(&server, g_content, sizeof(g_content));
+    resp.beginArray();
+    dooyaCtrl.toJSONAwnings(resp);
+    resp.endArray();
+    resp.endResponse();
+  }
+  else server.send(404, _encoding_text, _response_404);
+}
+
+void Web::handleAwning(WebServer &server) {
+  webServer.sendCORSHeaders(server);
+  if(server.method() == HTTP_OPTIONS) { server.send(200, "OK"); return; }
+  HTTPMethod method = server.method();
+  if(method == HTTP_GET) {
+    if(server.hasArg("awningId")) {
+      uint8_t awningId = atoi(server.arg("awningId").c_str());
+      dooya_device_t *awning = dooyaCtrl.getAwningById(awningId);
+      if(awning) {
+        JsonResponse resp;
+        resp.beginResponse(&server, g_content, sizeof(g_content));
+        resp.beginObject();
+        awning->toJSON(resp);
+        resp.endObject();
+        resp.endResponse();
+      }
+      else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Awning Id not found.\"}"));
+    }
+    else {
+      server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Missing awning id.\"}"));
+    }
+  }
+  else if(method == HTTP_PUT || method == HTTP_POST) {
+    if(server.hasArg("plain")) {
+      Serial.println(F("Updating awning"));
+      DynamicJsonDocument doc(512);
+      DeserializationError err = deserializeJson(doc, server.arg("plain"));
+      if(err) {
+        this->handleDeserializationError(server, err);
+        return;
+      }
+      else {
+        JsonObject obj = doc.as<JsonObject>();
+        if(obj.containsKey("awningId")) {
+          dooya_device_t *awning = dooyaCtrl.getAwningById(obj["awningId"]);
+          if(awning) {
+            awning->fromJSON(obj);
+            dooyaCtrl.saveAwnings();
+            JsonResponse resp;
+            resp.beginResponse(&server, g_content, sizeof(g_content));
+            resp.beginObject();
+            awning->toJSON(resp);
+            resp.endObject();
+            resp.endResponse();
+          }
+          else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Awning Id not found.\"}"));
+        }
+        else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No awning id.\"}"));
+      }
+    }
+    else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No awning data.\"}"));
+  }
+  else
+    server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Invalid Http method\"}"));
+}
+
+void Web::handleAwningCommand(WebServer &server) {
+  webServer.sendCORSHeaders(server);
+  if(server.method() == HTTP_OPTIONS) { server.send(200, "OK"); return; }
+  HTTPMethod method = server.method();
+  uint8_t awningId = 255;
+  dooya_commands cmd = dooya_commands::stop;
+  bool hasCmd = false;
+  int16_t target = -1;
+  if(method == HTTP_GET || method == HTTP_PUT || method == HTTP_POST) {
+    if(server.hasArg("awningId")) {
+      awningId = atoi(server.arg("awningId").c_str());
+      if(server.hasArg("command")) hasCmd = parseAwningCommand(server.arg("command"), cmd);
+      if(server.hasArg("target")) target = atoi(server.arg("target").c_str());
+    }
+    else if(server.hasArg("plain")) {
+      DynamicJsonDocument doc(256);
+      DeserializationError err = deserializeJson(doc, server.arg("plain"));
+      if(err) {
+        this->handleDeserializationError(server, err);
+        return;
+      }
+      else {
+        JsonObject obj = doc.as<JsonObject>();
+        if(obj.containsKey("awningId")) awningId = obj["awningId"];
+        else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No awning id.\"}"));
+        if(obj.containsKey("command")) {
+          if(obj["command"].is<const char *>())
+            hasCmd = parseAwningCommand(obj["command"].as<String>(), cmd);
+          if(obj["command"].is<const char *>() && obj["command"].as<String>().equalsIgnoreCase("position")) {
+            hasCmd = false;
+            if(obj.containsKey("target")) target = obj["target"];
+          }
+        }
+      }
+    }
+    else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No awning data.\"}"));
+    bool sent = false;
+    if(awningId != 255 && target >= 0 && target <= 100) {
+      sent = dooyaCtrl.sendPosition(awningId, (uint8_t)target);
+    }
+    else if(awningId != 255 && hasCmd) {
+      sent = dooyaCtrl.sendCommand(awningId, cmd);
+    }
+    if(sent) {
+      dooya_device_t *awning = dooyaCtrl.getAwningById(awningId);
+      JsonResponse resp;
+      resp.beginResponse(&server, g_content, sizeof(g_content));
+      resp.beginObject();
+      awning->toJSON(resp);
+      resp.endObject();
+      resp.endResponse();
+    }
+    else {
+      server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Awning not found or invalid command.\"}"));
+    }
+  }
+  else
+    server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Invalid Http method\"}"));
+}
+
 void Web::begin() {
   Serial.println("Creating Web MicroServices...");
   server.enableCORS(true);
@@ -1238,6 +1386,9 @@ void Web::begin() {
   apiServer.on("/fans", []() { webServer.handleGetFans(apiServer); });
   apiServer.on("/fan", []() { webServer.handleFan(apiServer); });
   apiServer.on("/fanCommand", []() { webServer.handleFanCommand(apiServer); });
+  apiServer.on("/awnings", []() { webServer.handleGetAwnings(apiServer); });
+  apiServer.on("/awning", []() { webServer.handleAwning(apiServer); });
+  apiServer.on("/awningCommand", []() { webServer.handleAwningCommand(apiServer); });
   apiServer.on("/fanState", []() {
     webServer.sendCORSHeaders(apiServer);
     if(apiServer.method() == HTTP_OPTIONS) { apiServer.send(200, "OK"); return; }
@@ -1695,6 +1846,119 @@ void Web::begin() {
     resp.addElem("fanId", fanId);
     resp.endObject();
     resp.endResponse();
+  });
+  server.on("/addAwning", []() {
+    if(server.method() == HTTP_OPTIONS) { server.send(200, "OK"); return; }
+    HTTPMethod method = server.method();
+    dooya_device_t *awning = nullptr;
+    if(method == HTTP_POST || method == HTTP_PUT) {
+      Serial.println(F("Adding awning"));
+      DynamicJsonDocument doc(512);
+      DeserializationError err = deserializeJson(doc, server.arg("plain"));
+      if(err) {
+        webServer.handleDeserializationError(server, err);
+        return;
+      }
+      else {
+        JsonObject obj = doc.as<JsonObject>();
+        awning = dooyaCtrl.addAwning();
+        if(awning) {
+          // Keep the requested id when it is free, otherwise use the assigned slot.
+          if(obj.containsKey("awningId")) {
+            uint8_t wanted = obj["awningId"];
+            if(wanted >= 1 && wanted <= MAX_AWNINGS && dooyaCtrl.getAwningById(wanted) == nullptr) {
+              awning->awningId = wanted;
+            }
+          }
+          awning->fromJSON(obj);
+          dooyaCtrl.saveAwnings();
+        }
+        else {
+          server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Max awnings reached.\"}"));
+          return;
+        }
+      }
+    }
+    if(awning) {
+      dooyaCtrl.publishDisco();
+      JsonResponse resp;
+      resp.beginResponse(&server, g_content, sizeof(g_content));
+      resp.beginObject();
+      awning->toJSON(resp);
+      resp.endObject();
+      resp.endResponse();
+    }
+    else {
+      server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Awning add err.\"}"));
+    }
+  });
+  server.on("/deleteAwning", []() {
+    webServer.sendCORSHeaders(server);
+    if(server.method() == HTTP_OPTIONS) { server.send(200, "OK"); return; }
+    HTTPMethod method = server.method();
+    uint8_t awningId = 255;
+    if(method == HTTP_GET || method == HTTP_PUT || method == HTTP_POST) {
+      if(server.hasArg("awningId")) {
+        awningId = atoi(server.arg("awningId").c_str());
+      }
+      else if(server.hasArg("plain")) {
+        Serial.println(F("Deleting awning"));
+        DynamicJsonDocument doc(256);
+        DeserializationError err = deserializeJson(doc, server.arg("plain"));
+        if(err) {
+          webServer.handleDeserializationError(server, err);
+          return;
+        }
+        else {
+          JsonObject obj = doc.as<JsonObject>();
+          if(obj.containsKey("awningId")) awningId = obj["awningId"];
+          else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No awning id.\"}"));
+        }
+      }
+      else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No awning data.\"}"));
+    }
+    dooya_device_t *awning = dooyaCtrl.getAwningById(awningId);
+    if(!awning) server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Awning not found.\"}"));
+    else {
+      dooyaCtrl.deleteAwning(awningId);
+      dooyaCtrl.unpublishDisco();
+      server.send(200, _encoding_json, F("{\"status\":\"SUCCESS\",\"desc\":\"Awning deleted.\"}"));
+    }
+  });
+  server.on("/saveAwning", []() {
+    webServer.sendCORSHeaders(server);
+    if(server.method() == HTTP_OPTIONS) { server.send(200, "OK"); return; }
+    HTTPMethod method = server.method();
+    if(method == HTTP_PUT || method == HTTP_POST) {
+      if(server.hasArg("plain")) {
+      Serial.println(F("Updating awning"));
+        DynamicJsonDocument doc(512);
+        DeserializationError err = deserializeJson(doc, server.arg("plain"));
+        if(err) {
+          webServer.handleDeserializationError(server, err);
+          return;
+        }
+        else {
+          JsonObject obj = doc.as<JsonObject>();
+          if(obj.containsKey("awningId")) {
+            dooya_device_t *awning = dooyaCtrl.getAwningById(obj["awningId"]);
+            if(awning) {
+              awning->fromJSON(obj);
+              dooyaCtrl.saveAwnings();
+              JsonResponse resp;
+              resp.beginResponse(&server, g_content, sizeof(g_content));
+              resp.beginObject();
+              awning->toJSON(resp);
+              resp.endObject();
+              resp.endResponse();
+            }
+            else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"Awning Id not found.\"}"));
+          }
+          else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No awning id.\"}"));
+        }
+      }
+      else server.send(500, _encoding_json, F("{\"status\":\"ERROR\",\"desc\":\"No awning data.\"}"));
+    }
   });
   server.on("/groupOptions", []() {
     webServer.sendCORSHeaders(server);
@@ -2545,6 +2809,9 @@ void Web::begin() {
   server.on("/fans", []() { webServer.handleGetFans(server); });
   server.on("/fanCommand", []() { webServer.handleFanCommand(server); });
   server.on("/fan", []() { webServer.handleFan(server); });
+  server.on("/awnings", []() { webServer.handleGetAwnings(server); });
+  server.on("/awningCommand", []() { webServer.handleAwningCommand(server); });
+  server.on("/awning", []() { webServer.handleAwning(server); });
   server.on("/saveSecurity", []() {
     webServer.sendCORSHeaders(server);
     if(server.method() == HTTP_OPTIONS) { server.send(200, "OK"); return; }

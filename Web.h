@@ -34,6 +34,9 @@ class Web {
     void handleGetFans(WebServer &server);
     void handleFan(WebServer &server);
     void handleFanCommand(WebServer &server);
+    void handleGetAwnings(WebServer &server);
+    void handleAwning(WebServer &server);
+    void handleAwningCommand(WebServer &server);
     void handleDeserializationError(WebServer &server, DeserializationError &err);
     void begin();
     void loop();
