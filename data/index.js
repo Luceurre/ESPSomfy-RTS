@@ -1159,6 +1159,7 @@ class UIBinder {
         somfy.showEditShade(false);
         somfy.showEditGroup(false);
         somfy.showEditFan(false);
+        somfy.showEditAwning(false);
     }
 }
 var ui = new UIBinder();
@@ -1985,6 +1986,8 @@ class Somfy {
                 this.setShadesList(somfy.shades);
                 this.setGroupsList(somfy.groups);
                 if (typeof somfy.fans !== 'undefined') this.setFansList(somfy.fans);
+                document.getElementById('spanMaxAwnings').innerText = somfy.maxAwnings || 8;
+                if (typeof somfy.awnings !== 'undefined') this.setAwningsList(somfy.awnings);
                 this.setRepeaterList(somfy.repeaters);
                 if (typeof somfy.version !== 'undefined') firmware.procFwStatus(somfy.version);
             }
@@ -2234,6 +2237,7 @@ class Somfy {
         document.getElementById('selShadeRoom').innerHTML = divOpts;
         document.getElementById('selGroupRoom').innerHTML = divOpts;
         document.getElementById('selFanRoom').innerHTML = divOpts;
+        document.getElementById('selAwningRoom').innerHTML = divOpts;
         //roomControls.innerHTML = divCtl;
         this.setListDraggable(document.getElementById('divRoomList'), '.room-draggable', (list) => {
             // Get the shade order
@@ -2489,6 +2493,44 @@ class Somfy {
         }
         document.getElementById('divFanList').innerHTML = divCfg;
         document.getElementById('divFanControls').innerHTML = divCtl;
+    }
+    setAwningsList(awnings) {
+        let divCfg = '';
+        let divCtl = '';
+        awnings = typeof awnings === 'undefined' ? [] : awnings;
+        awnings.sort((a, b) => { return a.sortOrder - b.sortOrder });
+        this._awnings = awnings;
+        let roomId = parseInt(document.getElementById('divRoomSelector').getAttribute('data-roomid'), 10);
+        const hex6 = (val) => (val >>> 0).toString(16).toUpperCase().padStart(6, '0');
+        const hex2 = (val) => (val & 0xFF).toString(16).toUpperCase().padStart(2, '0');
+        for (let i = 0; i < awnings.length; i++) {
+            let awning = awnings[i];
+            let room = _rooms.find(x => x.roomId === awning.roomId) || { roomId: 0, name: '' };
+            divCfg += `<div class="somfyShade" data-roomid="${awning.roomId}" data-awningid="${awning.awningId}">`;
+            divCfg += `<div class="button-outline" onclick="somfy.openEditAwning(${awning.awningId});"><i class="icss-edit"></i></div>`;
+            divCfg += '<div class="shade-name">';
+            divCfg += `<div class="cfg-room">${room.name}</div>`;
+            divCfg += `<div class="">${awning.name}</div>`;
+            divCfg += '</div>';
+            divCfg += `<span class="shade-address">${hex6(awning.remoteId)} ${hex2(awning.channel)}</span>`;
+            divCfg += `<div class="button-outline" onclick="somfy.deleteAwning(${awning.awningId});"><i class="icss-trash"></i></div>`;
+            divCfg += '</div>';
+            divCtl += `<div class="somfyShadeCtl somfyAwningCtl" style="height:auto;min-height:60px;flex-wrap:wrap;${roomId === 0 || roomId === room.roomId ? '' : 'display:none'}" data-awningid="${awning.awningId}" data-roomid="${awning.roomId}">`;
+            divCtl += `<div class="shade-icon" style="font-size:32px;"><span style="font-size:0.8em;">🏞️</span></div>`;
+            divCtl += `<div class="shade-name" style="white-space:nowrap;">`;
+            divCtl += `<span class="shadectl-room">${room.name}</span>`;
+            divCtl += `<span class="shadectl-name">${awning.name}</span>`;
+            divCtl += '</div>';
+            divCtl += `<div class="shadectl-buttons" style="display:flex;float:none;flex-wrap:wrap;justify-content:center;align-items:center;gap:4px;padding:4px 4px 8px 4px;width:100%;">`;
+            divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;" onclick="event.stopPropagation(); somfy.sendAwningCommand(${awning.awningId}, 'up');"><span>▲</span></div>`;
+            divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;" onclick="event.stopPropagation(); somfy.sendAwningCommand(${awning.awningId}, 'stop');"><span>■</span></div>`;
+            divCtl += `<div class="button-outline cmd-button" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;" onclick="event.stopPropagation(); somfy.sendAwningCommand(${awning.awningId}, 'down');"><span>▼</span></div>`;
+            divCtl += `<span class="shade-address awning-pos" data-awningid="${awning.awningId}" style="align-self:center;">${awning.position}%</span>`;
+            divCtl += '</div>';
+            divCtl += '</div>';
+        }
+        document.getElementById('divAwningList').innerHTML = divCfg;
+        document.getElementById('divAwningControls').innerHTML = divCtl;
     }
     setListDraggable(list, itemclass, onChanged) {
         let items = list.querySelectorAll(itemclass);
@@ -3316,6 +3358,55 @@ class Somfy {
             this.showEditRoom(false);
             this.showEditShade(false);
             this.showEditGroup(false);
+            this.showEditAwning(false);
+        }
+    }
+    openEditAwning(awningId) {
+        let elAwning = document.getElementById('somfyAwning');
+        if (typeof awningId === 'undefined' || awningId === null) {
+            let nextId = 1;
+            for (let id = 1; id <= 8; id++) {
+                if (!(this._awnings || []).some(a => a.awningId === id)) { nextId = id; break; }
+            }
+            document.getElementById('btnSaveAwning').innerText = 'Add Awning';
+            elAwning.setAttribute('data-new', 'true');
+            document.getElementById('spanAwningId').innerText = nextId;
+            document.getElementById('fldAwningName').value = '';
+            document.getElementById('fldAwningRemoteId').value = '';
+            document.getElementById('fldAwningChannel').value = '61';
+            document.getElementById('fldAwningTravelTime').value = 30;
+            document.getElementById('selAwningRoom').value = '0';
+            this.showEditAwning(true);
+            document.getElementById('btnSaveAwning').style.display = 'inline-block';
+        }
+        else {
+            document.getElementById('btnSaveAwning').innerText = 'Save Awning';
+            getJSONSync(`/awning?awningId=${awningId}`, (err, awning) => {
+                if (err) ui.serviceError(err);
+                else {
+                    elAwning.setAttribute('data-new', 'false');
+                    document.getElementById('spanAwningId').innerText = awning.awningId;
+                    document.getElementById('fldAwningName').value = awning.name;
+                    document.getElementById('fldAwningRemoteId').value = awning.remoteId.toString(16).toUpperCase().padStart(6, '0');
+                    document.getElementById('fldAwningChannel').value = awning.channel.toString(16).toUpperCase().padStart(2, '0');
+                    document.getElementById('fldAwningTravelTime').value = awning.travelTime;
+                    document.getElementById('selAwningRoom').value = awning.roomId;
+                    this.showEditAwning(true);
+                    document.getElementById('btnSaveAwning').style.display = 'inline-block';
+                }
+            });
+        }
+    }
+    showEditAwning(bShow) {
+        let el = document.getElementById('somfyAwning');
+        if (el) el.style.display = bShow ? '' : 'none';
+        el = document.getElementById('divAwningListContainer');
+        if (el) el.style.display = bShow ? 'none' : '';
+        if (bShow) {
+            this.showEditRoom(false);
+            this.showEditShade(false);
+            this.showEditGroup(false);
+            this.showEditFan(false);
         }
     }
     saveRoom() {
@@ -3519,6 +3610,53 @@ class Somfy {
             }
         }
     }
+    saveAwning() {
+        let elAwning = document.getElementById('somfyAwning');
+        let awningId = parseInt(document.getElementById('spanAwningId').innerText, 10);
+        let isNew = makeBool(elAwning.getAttribute('data-new'));
+        let name = document.getElementById('fldAwningName').value.trim();
+        let remoteId = parseInt(document.getElementById('fldAwningRemoteId').value.trim(), 16);
+        let channel = parseInt(document.getElementById('fldAwningChannel').value.trim(), 16);
+        let travelTime = parseInt(document.getElementById('fldAwningTravelTime').value, 10);
+        let roomId = parseInt(document.getElementById('selAwningRoom').value, 10) || 0;
+        let valid = true;
+        if (valid && (isNaN(remoteId) || remoteId < 1 || remoteId > 0xFFFFFF)) {
+            ui.errorMessage(document.getElementById('divSomfySettings'), 'The remote id must be a hex value between 1 and FFFFFF (e.g. 62130C from the Flipper capture).');
+            valid = false;
+        }
+        if (valid && (isNaN(channel) || channel < 0 || channel > 255)) {
+            ui.errorMessage(document.getElementById('divSomfySettings'), 'The channel must be a hex value between 0 and FF (e.g. 61).');
+            valid = false;
+        }
+        if (valid && (typeof name !== 'string' || name === '' || name.length > 20)) {
+            ui.errorMessage(document.getElementById('divSomfySettings'), 'You must provide a name for the awning between 1 and 20 characters.');
+            valid = false;
+        }
+        if (valid && (isNaN(travelTime) || travelTime < 1 || travelTime > 3600)) {
+            ui.errorMessage(document.getElementById('divSomfySettings'), 'The travel time must be between 1 and 3600 seconds.');
+            valid = false;
+        }
+        if (valid) {
+            let obj = { awningId: awningId, name: name, remoteId: remoteId, channel: isNaN(channel) ? 0x61 : channel, travelTime: travelTime, roomId: roomId };
+            if (isNew) {
+                putJSONSync('/addAwning', obj, (err, awning) => {
+                    if (err) ui.serviceError(err);
+                    else {
+                        elAwning.setAttribute('data-new', 'false');
+                        document.getElementById('spanAwningId').innerText = awning.awningId;
+                        document.getElementById('btnSaveAwning').innerText = 'Save Awning';
+                        this.updateAwningList();
+                    }
+                });
+            }
+            else {
+                putJSONSync('/saveAwning', obj, (err, awning) => {
+                    if (err) ui.serviceError(err);
+                    else this.updateAwningList();
+                });
+            }
+        }
+    }
     updateRoomsList() {
         getJSONSync('/rooms', (err, shades) => {
             if (err) {
@@ -3673,6 +3811,29 @@ class Somfy {
                         });
                     });
                     prompt.querySelector('.sub-message').innerHTML = `<p>Press YES to delete ${fan.name} or NO to cancel this operation.</p>`;
+                }
+            });
+        }
+    }
+    deleteAwning(awningId) {
+        let valid = true;
+        if (isNaN(awningId) || awningId <= 0) {
+            ui.errorMessage('A valid awning id was not supplied.');
+            valid = false;
+        }
+        if (valid) {
+            getJSONSync(`/awning?awningId=${awningId}`, (err, awning) => {
+                if (err) ui.serviceError(err);
+                else {
+                    let prompt = ui.promptMessage(`Are you sure you want to delete this awning?`, () => {
+                        ui.clearErrors();
+                        putJSONSync('/deleteAwning', { awningId: awningId }, (err, a) => {
+                            if (err) ui.serviceError(err);
+                            else this.updateAwningList();
+                            prompt.remove();
+                        });
+                    });
+                    prompt.querySelector('.sub-message').innerHTML = `<p>Press YES to delete ${awning.name} or NO to cancel this operation.</p>`;
                 }
             });
         }
@@ -4038,6 +4199,17 @@ class Somfy {
     sendFanCommand(fanId, command, cb) {
         putJSON('/fanCommand', { fanId: fanId, command: command }, (err, fan) => {
             if (typeof cb === 'function') cb(err, fan);
+        });
+    }
+    sendAwningCommand(awningId, command, cb) {
+        putJSON('/awningCommand', { awningId: awningId, command: command }, (err, awning) => {
+            if (typeof cb === 'function') cb(err, awning);
+        });
+    }
+    updateAwningList() {
+        getJSONSync('/awnings', (err, awnings) => {
+            if (err) ui.serviceError(err);
+            else this.setAwningsList(awnings);
         });
     }
     sendTiltCommand(shadeId, command, cb) {
