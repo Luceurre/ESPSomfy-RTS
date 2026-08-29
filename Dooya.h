@@ -229,16 +229,47 @@ inline void DooyaController::loop() {
     if(awning.awningId == 255) continue;
     if(awning.state == dooya_state::stopped) continue;
     const uint8_t pos = this->currentPosition(awning);
-    bool done = false;
-    if(awning.state == dooya_state::opening && (pos >= awning.target || pos >= 100)) done = true;
-    if(awning.state == dooya_state::closing && (pos <= awning.target || pos <= 0)) done = true;
-    if(done) {
-      this->stopTravel(awning, true);
-      this->publishState(awning.awningId);
+    // DOOYA motors self-stop at their physical limits, so full open/close
+    // runs are never cut short by us - the estimate only needs to settle.
+    // Our own STOP frame is sent exclusively for partial position targets,
+    // where the motor would otherwise run all the way to its limit.
+    if(awning.state == dooya_state::opening) {
+      if(awning.target < 100 && pos >= awning.target) {
+        // Partial target reached: stop the motor here.
+        this->stopTravel(awning, true);
+        this->publishState(awning.awningId);
+      }
+      else if(pos >= 100) {
+        // Reached the upper limit; the motor stopped itself.
+        awning.position = 100;
+        awning.state = dooya_state::stopped;
+        awning.target = 100;
+        this->saveAwnings();
+        this->publishState(awning.awningId);
+      }
+      else if(now - awning.lastPublish > 1000) {
+        awning.position = pos;
+        this->publishState(awning.awningId);
+      }
     }
-    else if(now - awning.lastPublish > 1000) {
-      awning.position = pos;
-      this->publishState(awning.awningId);
+    else if(awning.state == dooya_state::closing) {
+      if(awning.target > 0 && pos <= awning.target) {
+        // Partial target reached: stop the motor here.
+        this->stopTravel(awning, true);
+        this->publishState(awning.awningId);
+      }
+      else if(pos <= 0) {
+        // Reached the lower limit; the motor stopped itself.
+        awning.position = 0;
+        awning.state = dooya_state::stopped;
+        awning.target = 0;
+        this->saveAwnings();
+        this->publishState(awning.awningId);
+      }
+      else if(now - awning.lastPublish > 1000) {
+        awning.position = pos;
+        this->publishState(awning.awningId);
+      }
     }
   }
 }

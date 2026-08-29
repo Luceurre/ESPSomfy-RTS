@@ -42,9 +42,11 @@ Mirrors the Create Ikohs fan integration (`Fan.h`):
     pin, retuning the CC1101 to 433.92 around the transmission exactly like
     `FanController::sendFanFrame()` (and retuning back to the Somfy frequency
     afterwards)
-  - Position estimation: commands open/close travel with a per-device travel
-    time; `loop()` advances the estimated position and auto-sends STOP when the
-    target is reached (also powers HA `set_position`)
+  - Position estimation from a per-device travel time. DOOYA motors self-stop
+    at their physical limits, so full OPEN/CLOSE runs are never cut short by
+    the controller - the estimate simply settles at 0/100. Our own STOP frame
+    is only sent for partial `set_position` targets, where the motor would
+    otherwise run to its limit
 - **`SomfyController.ino`** — global `dooyaCtrl`, `begin()` at startup, `loop()`
   in the main loop
 - **`MQTT.cpp`** — HA MQTT discovery (cover, `device_class: awning`),
