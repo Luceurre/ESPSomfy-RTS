@@ -104,3 +104,22 @@ Under the configured root topic:
   would need its own mapping.
 - Single channel byte per awning device; multi-channel remotes need one
   awning entry per channel.
+
+## Flashing without losing device state
+
+The box's LittleFS partition holds more than the web UI. When building a
+littlefs image for flashing, it MUST include the device's state files or the
+device loses its configuration:
+
+- `/shades.cfg` — ASCII config (format in `ConfigFile.cpp`): rooms, shades,
+  RTS rolling codes, repeaters. Dropping it boots the controller "Starting
+  clean" — shutters vanish. (Not JSON; no extension; easy to miss.)
+- `/fans.json` — Create Ikohs fan definitions and codes
+- `/awnings.json` — DOOYA awning definitions
+
+Before flashing, dump the device's littlefs partition
+(`0x290000`, size `0x160000` on this box's custom partition table), extract
+these files (they can be carved from the image; `fans.json`/`awnings.json`
+are plain JSON, `shades.cfg` is the ASCII format above), and rebuild the
+image with `data/` + the extracted files. See `backups_*/RESTORE.md` in the
+enclosing workspace for the exact procedure used.
